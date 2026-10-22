@@ -381,3 +381,26 @@ def sample_step(logits, tr, tok, T, top_k, top_p, rep_pen, history, show=48, ctx
                       "back": S - 1 - pos},
         "norms": [round(l["norm"], 1) for l in tr],
     }
+
+
+@torch.no_grad()
+def quick_text(model, tok, prompt, max_new=20, stop_text=("\n",)):
+    """เขียนข้อความสั้นๆ แบบเลือกตัวที่น่าจะเป็นที่สุดทุกครั้ง (ใช้ให้สมองโตคิดคำค้น)"""
+    ids = tok.encode(prompt)
+    stops = {i for i in (tok.id("<|im_end|>"), tok.id("<|endoftext|>")) if i is not None}
+    cache = model.new_cache()
+    logits, _ = model.forward(ids, 0, cache)
+    out = []
+    for _ in range(max_new):
+        nxt = int(logits.float().argmax())
+        if nxt in stops:
+            break
+        out.append(nxt)
+        text = tok.decode(out)
+        if any(s in text for s in stop_text):
+            break
+        logits, _ = model.forward([nxt], len(ids) + len(out) - 1, cache)
+    text = tok.decode(out)
+    for s in stop_text:
+        text = text.split(s)[0]
+    return text.strip()

@@ -20,6 +20,7 @@ from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from urllib.parse import parse_qs, urlparse
 
 import bigbrain as B
+import web as WEB
 import formulas as F
 import seed_data
 from brain import SAND_TAG, USER_TAG, think_step
@@ -59,6 +60,8 @@ BUILTIN_FORMULAS = [
      "สิ่งที่สอนและคำตอบที่แก้ให้ จะถูกอ่านซ้ำกี่เท่าต่อรอบข้อมูล", "train"),
     ("w_liked", "น้ำหนัก: คำตอบที่ได้ 👍", "4", "เท่า", "คำตอบที่ได้ 👍 จะถูกอ่านซ้ำกี่เท่า", "train"),
     ("w_text", "น้ำหนัก: ข้อความที่ป้อน", "1", "เท่า", "ข้อความยาวที่ป้อนให้อ่าน จะถูกอ่านซ้ำกี่เท่า", "train"),
+    ("w_web", "น้ำหนัก: บทความที่อ่านเองจากอินเทอร์เน็ต", "1", "เท่า",
+     "บทความที่แซนด์ออกไปอ่านเองหรือค้นตอนตอบ จะถูกอ่านซ้ำกี่เท่าตอนฝึก", "train"),
 ]
 
 VAR_LABELS = {
@@ -75,6 +78,8 @@ VAR_LABELS = {
     "likes": "จำนวน 👍",
     "dislikes": "จำนวน 👎",
     "days": "อายุของแซนด์ (วัน)",
+    "web_n": "จำนวนบทความที่อ่านจากอินเทอร์เน็ต",
+    "web_k": "ข้อความจากอินเทอร์เน็ต (พันตัวอักษร)",
 }
 
 lock = threading.Lock()
@@ -135,6 +140,8 @@ def init_db():
     CREATE TABLE IF NOT EXISTS taught(id INTEGER PRIMARY KEY, q TEXT, a TEXT, ts REAL, source TEXT DEFAULT 'teach');
     CREATE TABLE IF NOT EXISTS texts(id INTEGER PRIMARY KEY, title TEXT, content TEXT, ts REAL);
     CREATE TABLE IF NOT EXISTS traces(msg_id INTEGER PRIMARY KEY, data TEXT);
+    CREATE TABLE IF NOT EXISTS web_pages(id INTEGER PRIMARY KEY, title TEXT, url TEXT UNIQUE, content TEXT,
+        ts REAL, source TEXT, lang TEXT);
     """)
     old = c.execute("SELECT value FROM settings WHERE key='schema'").fetchone()
     if not old or old[0] != SCHEMA:
@@ -172,6 +179,8 @@ def base_vars():
         "likes": count("SELECT COUNT(*) n FROM messages WHERE rating>0"),
         "dislikes": count("SELECT COUNT(*) n FROM messages WHERE rating<0"),
         "days": (time.time() - t.born) / 86400,
+        "web_n": count("SELECT COUNT(*) n FROM web_pages"),
+        "web_k": (q("SELECT SUM(LENGTH(content)) n FROM web_pages")[0]["n"] or 0) / 1000,
     }
 
 
@@ -420,11 +429,18 @@ def get_corpus():
     taught = [pair(r["q"], r["a"]) for r in q("SELECT q,a FROM taught")]
     texts = [r["content"] for r in q("SELECT content FROM texts")]
     liked = [pair(r["qn"], r["ans"]) for r in liked_pairs() if r["qn"]]
+    webs, total = [], 0
+    for r in q("SELECT title,content FROM web_pages ORDER BY id DESC"):
+        total += len(r["content"])
+        if total > 15_000_000:                 # จำกัดขนาด: ใช้บทความล่าสุดไม่เกิน 15 ล้านตัวอักษร
+            break
+        webs.append(r["title"] + "\n" + r["content"])
     # ข้อความที่ไม่ได้ใช้ฝึก (validation) ตัดจากท้ายสุด จึงวางบทเรียนตั้งต้นไว้ท้าย
-    unique = "\n".join(texts + liked + taught + [SEED_TEXT])
+    unique = "\n".join(webs + texts + liked + taught + [SEED_TEXT])
     weighted = [(t, w("w_taught", 8) - 1) for t in taught] + \
                [(t, w("w_liked", 4) - 1) for t in liked] + \
-               [(t, w("w_text", 1) - 1) for t in texts]
+               [(t, w("w_text", 1) - 1) for t in texts] + \
+               [(t, w("w_web", 1) - 1) for t in webs]
     return weighted, unique
 
 
@@ -440,6 +456,8 @@ def data_summary():
             {"name": "สิ่งที่สอน", "chars": t_chars, "weight": res.get("w_taught")},
             {"name": "คำตอบที่ได้ 👍", "chars": l_chars, "weight": res.get("w_liked")},
             {"name": "ข้อความที่ป้อน", "chars": x_chars, "weight": res.get("w_text")},
+            {"name": "อ่านเองจากอินเทอร์เน็ต", "chars": q("SELECT SUM(LENGTH(content)) n FROM web_pages")[0]["n"] or 0,
+             "weight": res.get("w_web")},
         ],
         "taught": q("SELECT id,q,a,ts,source FROM taught ORDER BY id DESC LIMIT 300"),
         "texts": q("SELECT id,title,LENGTH(content) chars,substr(content,1,120) preview,ts FROM texts ORDER BY id DESC"),
@@ -464,6 +482,7 @@ def check_milestones():
         ("steps", v["steps"], (100, 1000, 5000, 10000, 50000, 100000, 500000), "ฝึกครบ {:,} ก้าว"),
         ("chat", v["chats"], (1, 10, 50, 100, 500), "คุยกันครบ {} ข้อความ"),
         ("teach", v["taught"], (1, 10, 50, 100), "ได้รับการสอนครบ {} เรื่อง"),
+        ("web", v["web_n"], (1, 10, 50, 100, 500, 1000, 5000), "อ่านบทความจากอินเทอร์เน็ตครบ {:,} เรื่อง"),
     ):
         done = float(setting("ms_" + kind, "0"))
         for m in marks:
@@ -608,11 +627,12 @@ def _grams(s):
 
 def retrieve(question, k=2):
     """ค้นข้อความที่ผู้ใช้ป้อนไว้ ส่วนที่เกี่ยวกับคำถามที่สุด (เทียบตัวอักษร 3 ตัวที่ซ้ำกัน)"""
-    key = q("SELECT COUNT(*) n, MAX(id) m FROM texts")[0]
-    key = (key["n"], key["m"])
+    k1 = q("SELECT COUNT(*) n, MAX(id) m FROM texts")[0]
+    k2 = q("SELECT COUNT(*) n, MAX(id) m FROM web_pages")[0]
+    key = (k1["n"], k1["m"], k2["n"], k2["m"])
     if _CHUNKS["key"] != key:
         chunks = []
-        for t in q("SELECT title,content FROM texts"):
+        for t in q("SELECT title,content FROM texts UNION ALL SELECT '🌐 ' || title, content FROM web_pages"):
             c = t["content"]
             for i in range(0, max(1, len(c)), 450):
                 piece = c[i:i + 600]
@@ -624,10 +644,12 @@ def retrieve(question, k=2):
         return []
     scored = sorted(((len(qg & g) / math.sqrt(len(g) + 1), title, piece) for title, piece, g in _CHUNKS["chunks"]),
                     reverse=True)[:k]
-    return [(title, piece) for sc, title, piece in scored if sc > 0.35]
+    found = [(title, piece) for sc, title, piece in scored if sc > 0.35]
+    retrieve.best = scored[0][0] if scored else 0
+    return found
 
 
-def build_big_prompt(user_text, think_on, tk, budget=3000):
+def build_big_prompt(user_text, think_on, tk, budget=3000, web_pages=None):
     sys_txt = SYS_BASE
     taught = q("SELECT q,a FROM taught ORDER BY id DESC LIMIT 60")[::-1]
     if taught:
@@ -635,6 +657,9 @@ def build_big_prompt(user_text, think_on, tk, budget=3000):
     found = retrieve(user_text)
     if found:
         sys_txt += "\n\nข้อความที่ผู้ใช้เคยให้อ่าน ส่วนที่อาจเกี่ยวข้อง:\n" + "\n---\n".join(f"[{t}] {p}" for t, p in found)
+    if web_pages:
+        sys_txt += ("\n\nผลค้นจากวิกิพีเดียเมื่อสักครู่ (ใช้ตอบได้ ถ้าใช้ข้อมูลส่วนนี้ให้บอกชื่อบทความที่อ้างอิงท้ายคำตอบ):\n"
+                    + "\n---\n".join(f"[{p['title']}] {p['text'][:1800]}" for p in web_pages))
     hist = q("SELECT role,content FROM messages ORDER BY id DESC LIMIT 9")[::-1]
     head = f"<|im_start|>system\n{sys_txt}<|im_end|>\n"
     turns = [f"<|im_start|>{'user' if m['role'] == 'user' else 'assistant'}\n{m['content']}<|im_end|>\n" for m in hist]
@@ -651,14 +676,16 @@ def _stream_big(user_text, write):
         m, tk, key = BIG.model, BIG.tok, BIG.key
     meta = B.MODELS[key]
     think_on = meta["think"] and gs["think"]
-    prompt, found, n_taught = build_big_prompt(user_text, think_on, tk)
+    web_used = search_before_answer(user_text, m, tk, meta, write)
+    prompt, found, n_taught = build_big_prompt(user_text, think_on, tk, web_pages=web_used)
     ids = tk.encode(prompt)
     T, top_k, top_p, rp = gs["temperature"], gs["top_k"], 0.95, 1.05
     info = {"mode": "big", "size_label": meta["label"], "label": meta["label"], "params": m.n_params,
             "device": m.device, "layers": m.L, "heads": m.H, "kv": m.KV, "d": m.d, "hd": m.hd,
             "step": trainer.step, "T": T, "top_k": top_k, "top_p": top_p, "rep": rp, "think": think_on,
             "prompt_tokens": len(ids), "prompt_chars": len(ids), "taught": n_taught, "retrieved": found,
-            "quant8": m.quant8, "vocab": tk.vocab}
+            "quant8": m.quant8, "vocab": tk.vocab,
+            "web": [{"title": p["title"], "url": p["url"]} for p in web_used]}
     write({"start": info, "prompt": prompt[-4000:]})
     stops = {i for i in (tk.id("<|im_end|>"), tk.id("<|endoftext|>")) if i is not None}
     t_s, t_e = tk.id("<think>"), tk.id("</think>")
@@ -714,6 +741,137 @@ def _stream_big(user_text, write):
                         "thinking": shown["think"], "summary": summary}, ensure_ascii=False)))
     write({"done": True, "id": aid, "summary": summary})
     record_growth()
+
+
+# ---------------------------------------------------------------- อินเทอร์เน็ต (ปิดไว้เป็นค่าเริ่มต้น)
+SMALLTALK = ("สวัสดี", "หวัดดี", "ดีจ้า", "ขอบคุณ", "ขอบใจ", "บาย", "บ๊ายบาย", "ลาก่อน", "ฝันดี", "ราตรีสวัสดิ์",
+             "โอเค", "ok", "hi", "hello", "555", "ครับ", "ค่ะ", "ได้", "ใช่", "อืม")
+
+
+def is_smalltalk(t):
+    t = t.strip().lower()
+    return len(t) < 20 and t.startswith(SMALLTALK)
+
+
+def web_settings():
+    return {
+        "net": setting("net", "0") == "1",
+        "learn": setting("web_learn", "0") == "1",
+        "search": setting("web_search", "1") == "1",
+        "interval": int(float(setting("web_interval", "60"))),
+        "daily": int(float(setting("web_daily", "200"))),
+        "topics": setting("web_topics", ""),
+        "lang": setting("web_lang", "th"),
+    }
+
+
+def save_page(pg, source, lang="th"):
+    if not pg or len(pg["text"]) < 200:
+        return False
+    if q("SELECT 1 FROM web_pages WHERE url=?", (pg["url"],)):
+        return False
+    x("INSERT INTO web_pages(title,url,content,ts,source,lang) VALUES(?,?,?,?,?,?)",
+      (pg["title"], pg["url"], pg["text"], time.time(), source, lang))
+    trainer.dirty = True
+    return True
+
+
+def search_before_answer(user_text, m, tk, meta, write):
+    """สมองโต: ถ้าเปิดอินเทอร์เน็ต ให้คิดคำค้น → ค้นวิกิพีเดีย → อ่าน 2 บทความ → จำไว้"""
+    ws = web_settings()
+    forced = user_text.startswith(("ค้น:", "ค้น "))
+    if not (ws["net"] and (ws["search"] or forced)):
+        return []
+    if not forced and (len(user_text) < 8 or is_smalltalk(user_text)):
+        return []
+    retrieve(user_text)
+    if not forced and getattr(retrieve, "best", 0) > 0.9:
+        write({"web": {"stage": "remembered"}})
+        return []
+    try:
+        write({"web": {"stage": "thinking"}})
+        sys_q = "สร้างคำค้นวิกิพีเดียสั้นๆ 1 ถึง 5 คำจากคำถาม ตอบเฉพาะคำค้นเท่านั้น"
+        tail = "<|im_start|>assistant\n" + ("<think>\n\n</think>\n\n" if meta["think"] else "")
+        with BIG.lock:
+            query = B.quick_text(m, tk, f"<|im_start|>system\n{sys_q}<|im_end|>\n<|im_start|>user\n"
+                                         f"{user_text}<|im_end|>\n{tail}", max_new=20)
+        query = query.strip(" \"'“”`") or user_text
+        write({"web": {"stage": "search", "q": query}})
+        hits = WEB.search(query, ws["lang"], 4) or WEB.search(user_text, ws["lang"], 4)
+        pages = []
+        for h in hits[:2]:
+            pg = WEB.page(h["title"], ws["lang"])
+            if pg and len(pg["text"]) > 100:
+                pages.append(pg)
+                save_page(pg, "search", ws["lang"])
+        write({"web": {"stage": "read", "q": query,
+                       "pages": [{"title": p["title"], "url": p["url"]} for p in pages]}})
+        return pages
+    except Exception as e:
+        write({"web": {"stage": "error", "error": f"ค้นไม่สำเร็จ ({type(e).__name__}) — ตอบจากความรู้ที่มี"}})
+        return []
+
+
+READER = {"state": "idle", "last": None, "error": None, "next": 0}
+
+
+def _read_one(ws):
+    topics = [t.strip() for t in re.split(r"[,\n]", ws["topics"]) if t.strip()]
+    for _ in range(4):
+        if topics:
+            import random
+            topic = random.choice(topics)
+            READER["state"] = f"ค้นหัวข้อ “{topic}”"
+            have = {r["title"] for r in q("SELECT title FROM web_pages")}
+            hits = [h for h in WEB.search(topic, ws["lang"], 20) if h["title"] not in have]
+            if not hits:
+                topics.remove(topic)
+                continue
+            pg = WEB.page(random.choice(hits[:10])["title"], ws["lang"])
+        else:
+            READER["state"] = "สุ่มบทความ"
+            pg = WEB.random_page(ws["lang"])
+        if save_page(pg, "learn", ws["lang"]):
+            return pg
+    return None
+
+
+def reader_loop():
+    """แซนด์ทารกออกไปอ่านเอง: ทีละบทความ ตามช่วงเวลาที่ตั้งไว้ และไม่เกินจำนวนต่อวัน"""
+    while True:
+        ws = web_settings()
+        if not (ws["net"] and ws["learn"]):
+            READER.update(state="ปิดอยู่", next=0)
+            time.sleep(1)
+            continue
+        today = count("SELECT COUNT(*) n FROM web_pages WHERE source='learn' AND ts>?", (time.time() - 86400,))
+        if today >= ws["daily"]:
+            READER.update(state=f"ครบ {ws['daily']} บทความใน 24 ชั่วโมงแล้ว พักก่อน")
+            time.sleep(10)
+            continue
+        if time.time() < READER["next"]:
+            time.sleep(1)
+            continue
+        try:
+            pg = _read_one(ws)
+            if pg:
+                READER.update(last={"title": pg["title"], "url": pg["url"], "chars": len(pg["text"]), "ts": time.time()},
+                              error=None)
+                record_growth()
+            READER.update(state="รออ่านเรื่องถัดไป", next=time.time() + max(10, ws["interval"]))
+        except Exception as e:
+            READER.update(state="ต่ออินเทอร์เน็ตไม่ได้ จะลองใหม่", error=f"{type(e).__name__}: {e}",
+                          next=time.time() + 60)
+
+
+def web_state():
+    return {
+        "settings": web_settings(), "reader": READER,
+        "today": count("SELECT COUNT(*) n FROM web_pages WHERE source='learn' AND ts>?", (time.time() - 86400,)),
+        "total": count("SELECT COUNT(*) n FROM web_pages"),
+        "chars": q("SELECT SUM(LENGTH(content)) n FROM web_pages")[0]["n"] or 0,
+        "pages": q("SELECT id,title,url,LENGTH(content) chars,ts,source FROM web_pages ORDER BY id DESC LIMIT 40"),
+    }
 
 
 def stream_chat(user_text, write):
@@ -817,6 +975,7 @@ def state():
         "born": born[0]["ts"] if born else time.time(),
         "chats": v["chats"],
         "big": BIG.status(),
+        "web": web_state(),
     }
 
 
@@ -936,6 +1095,32 @@ class Handler(BaseHTTPRequestHandler):
             if was:
                 trainer.start()
             ok()
+        elif p == "/api/web/settings":
+            for k, key in (("net", "net"), ("learn", "web_learn"), ("search", "web_search")):
+                if k in d:
+                    set_setting(key, "1" if d[k] else "0")
+            if d.get("net") is False:
+                set_setting("web_learn", "0")
+            for k, key, lo, hi in (("interval", "web_interval", 10, 86400), ("daily", "web_daily", 1, 5000)):
+                if k in d:
+                    try:
+                        set_setting(key, int(max(lo, min(hi, float(d[k])))))
+                    except (TypeError, ValueError):
+                        pass
+            if "topics" in d:
+                set_setting("web_topics", str(d["topics"])[:500])
+            if d.get("lang") in ("th", "en"):
+                set_setting("web_lang", d["lang"])
+            if d.get("net") or d.get("learn"):
+                event("web", "อนุญาตให้แซนด์ใช้อินเทอร์เน็ต" if d.get("net") else "แซนด์เริ่มออกไปอ่านเอง")
+            ok()
+        elif p == "/api/web/read_now":
+            READER["next"] = 0
+            ok()
+        elif p == "/api/web/delete":
+            x("DELETE FROM web_pages WHERE id=?", (int(d.get("id", 0)),))
+            data_changed()
+            ok()
         elif p == "/api/brain":
             mode = d.get("mode")
             if mode in ("baby", "big"):
@@ -1001,6 +1186,7 @@ def main():
         BIG.load(bm)
     elif gs["auto_train"]:
         trainer.start()
+    threading.Thread(target=reader_loop, daemon=True).start()
     srv = ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
     if not os.environ.get("SAND_NO_BROWSER"):
         threading.Timer(1.0, lambda: webbrowser.open(url)).start()

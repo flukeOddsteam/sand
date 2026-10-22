@@ -239,6 +239,18 @@ details.ref summary{cursor:pointer;font-size:13px;color:var(--sand)}
 .stream span.think{opacity:.6;font-style:italic;font-size:15px}
 .stream span.mark{font-size:11.5px;color:var(--teal);border:1px solid var(--teal);border-radius:6px;padding:0 5px;margin:0 3px}
 .stream span.wait{color:var(--muted);font-size:11px}
+.webnote{font-size:12.5px;color:var(--teal);margin-bottom:6px;line-height:1.6}
+.webnote a,.srcs a,.wlist a,.wstatus a{color:var(--teal)}
+.srcs{font-size:12px;color:var(--muted);margin-top:6px;line-height:1.6}
+.switch{display:flex;align-items:flex-start;gap:10px;margin:8px 0;font-size:13.5px;cursor:pointer}
+.switch input{margin-top:3px;accent-color:var(--sand2);width:16px;height:16px;flex:none}
+.switch small{display:block;color:var(--muted);font-size:12px;line-height:1.5}
+.wrow{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:6px}
+.wrow label{font-size:12px;color:var(--muted)}
+.wrow select,.wrow input{width:100%;margin-top:4px;background:var(--deep);border:1px solid var(--line);border-radius:8px;padding:6px 8px;outline:0}
+.wstatus{font-size:12.5px;background:var(--deep);border-radius:8px;padding:8px 10px;margin-top:8px;line-height:1.6}
+.wstatus b{color:var(--sand);font-weight:600}
+.wlist .item .meta .tag{margin-left:0}
 #pCanvas{width:100%;height:300px;display:block;background:var(--deep);border-radius:10px;margin-bottom:8px}
 
 @media (max-width:980px){
@@ -384,6 +396,28 @@ details.ref summary{cursor:pointer;font-size:13px;color:var(--sand)}
 
     <!-- ===== DATA ===== -->
     <div id="data" class="tab">
+      <h3>🌐 เรียนรู้จากอินเทอร์เน็ต</h3>
+      <div class="card">
+        <label class="switch"><input type="checkbox" id="wNet"><span>อนุญาตให้แซนด์ใช้อินเทอร์เน็ต
+          <small>เปิดแล้วแซนด์จะไม่ออฟไลน์ 100%: สิ่งที่ค้นจะถูกส่งไปที่ Wikipedia (อ่านผ่าน API ทางการ ไม่เกิน 1 ครั้งต่อวินาที)</small></span></label>
+        <div id="wMore">
+          <label class="switch"><input type="checkbox" id="wLearn"><span>🌱 ให้แซนด์ทารกออกไปอ่านเอง
+            <small>หยิบบทความ Wikipedia มาอ่านทีละเรื่อง แล้วเอาไปฝึกสมองอัตโนมัติ</small></span></label>
+          <div class="wrow">
+            <label>อ่านทุก<select id="wInt"><option value="30">30 วินาที</option><option value="60">1 นาที</option><option value="300">5 นาที</option><option value="900">15 นาที</option><option value="3600">1 ชั่วโมง</option></select></label>
+            <label>ไม่เกินวันละ (บทความ)<input type="number" id="wDaily" min="1" max="5000"></label>
+          </div>
+          <div class="wrow" style="grid-template-columns:2fr 1fr">
+            <label>หัวข้อที่อยากให้อ่าน (คั่นด้วย , · เว้นว่าง = สุ่ม)<input id="wTopics" placeholder="เช่น ดาราศาสตร์, ประวัติศาสตร์ไทย, คอมพิวเตอร์"></label>
+            <label>ภาษา<select id="wLang"><option value="th">ไทย</option><option value="en">อังกฤษ</option></select></label>
+          </div>
+          <label class="switch" style="margin-top:12px"><input type="checkbox" id="wSearch"><span>🎓 ให้สมองโตค้นวิกิพีเดียก่อนตอบ
+            <small>คิดคำค้นเอง อ่าน 2 บทความ ตอบพร้อมบอกที่มา แล้วจำไว้ใช้ตอนออฟไลน์ · พิมพ์ “ค้น: …” เพื่อสั่งค้นทุกครั้ง</small></span></label>
+          <div class="wstatus" id="wStatus"></div>
+        </div>
+      </div>
+      <div class="list wlist" id="wList"></div>
+
       <h3>แซนด์เรียนจากอะไรบ้าง</h3>
       <div class="card"><table class="srctbl" id="srcTbl"></table>
         <div class="say">น้ำหนัก = อ่านซ้ำกี่เท่า แก้ได้ที่แท็บสูตร · ข้อมูลใหม่ถูกใช้ทันทีในก้าวฝึกถัดไป</div></div>
@@ -587,6 +621,18 @@ async function send(){
               + (st.taught ? ` · ใช้สิ่งที่สอน ${st.taught} เรื่อง` : '') + (st.retrieved.length ? ` · ค้นเจอจาก: ${esc(st.retrieved.join(', '))}` : '')
             : `สมองขนาด${st.size_label} · ${st.layers} ชั้น · ${st.heads} หัว attention · ฝึกมา <b>${fmtNum(st.step)}</b> ก้าว · อ่านบริบท ${st.prompt_chars} ตัวอักษร`;
         }
+        if(d.web){
+          const w = d.web;
+          if(!row.webnote){ row.webnote = document.createElement('div'); row.webnote.className = 'webnote'; row.body.before(row.webnote); }
+          const links = (w.pages || []).map(p => `<a href="${esc(p.url)}" target="_blank" rel="noopener">${esc(p.title)}</a>`).join(', ');
+          row.webnote.innerHTML = w.stage === 'thinking' ? '🔎 กำลังคิดคำค้น…'
+            : w.stage === 'search' ? `🔎 ค้นวิกิพีเดีย “${esc(w.q)}”…`
+            : w.stage === 'read' ? (links ? `🔎 ค้น “${esc(w.q)}” → อ่าน: ${links}` : `🔎 ค้น “${esc(w.q)}” แต่ไม่เจอบทความที่ตรง`)
+            : w.stage === 'remembered' ? '📚 เคยอ่านเรื่องนี้แล้ว ตอบจากความจำ'
+            : `<span class="err">${esc(w.error || '')}</span>`;
+          $('#liveStatus').innerHTML = row.webnote.innerHTML;
+          if(w.pages?.length) row.sources = w.pages;
+        }
         if(d.tok){
           live.tokens.push(d.tok);
           const tk = d.tok;
@@ -613,6 +659,9 @@ async function send(){
           row.classList.remove('thinking');
           if(!full) row.body.textContent = '…';
           if(tbox) tbox.open = false;
+          if(row.sources){ const sc = document.createElement('div'); sc.className = 'srcs';
+            sc.innerHTML = 'ที่มา: ' + row.sources.map(p => `<a href="${esc(p.url)}" target="_blank" rel="noopener">${esc(p.title)}</a> (Wikipedia, CC BY-SA)`).join(' · ');
+            row.body.after(sc); }
           setActs(row, {id:d.id, rating:0, has_trace:true});
           live.summary = d.summary; renderSummary();
           $('#liveStatus').innerHTML = `คิดเสร็จ ${live.tokens.length} ${UNIT()}ใน ${d.summary.secs} วินาที (${fmtNum(live.tokens.length / Math.max(d.summary.secs, .01), 1)} ${UNIT()}/วิ) · คลิกที่ข้อความเพื่อดูการคิดของแต่ละ${UNIT()}`;
@@ -751,7 +800,8 @@ async function loadState(){
   try{ S = await (await fetch('/api/state')).json(); }catch{ return; }
   render();
   clearTimeout(pollTimer);
-  const bigBusy = S.big.models.some(m => m.dl.state === 'downloading') || S.big.load.state === 'loading';
+  const bigBusy = S.big.models.some(m => m.dl.state === 'downloading') || S.big.load.state === 'loading'
+    || (S.web.settings.net && S.web.settings.learn && $('#data').classList.contains('on'));
   pollTimer = setTimeout(loadState, bigBusy ? 1200 : S.train.running ? 2000 : 6000);
 }
 
@@ -776,7 +826,7 @@ function render(){
     $('#sK').value = st.top_k; $('#vK').textContent = st.top_k;
     $('#sD').value = st.delay; $('#vD').textContent = st.delay;
   }
-  renderTrain(); renderFormulas(); renderData(); renderBrain();
+  renderTrain(); renderFormulas(); renderData(); renderBrain(); renderWeb();
   $('#tlList').innerHTML = S.events.map(e => `<div class="ev ${e.kind}"><div>${esc(e.title)}</div><div class="meta">${when(e.ts)}</div></div>`).join('');
 }
 
@@ -1040,6 +1090,38 @@ $('#xfile').onchange = async e => {
   }
   e.target.value = ''; loadState();
 };
+
+/* ---------- internet ---------- */
+function renderWeb(){
+  const W = S.web, ws = W.settings, R = W.reader;
+  const act = document.activeElement;
+  $('#wNet').checked = ws.net; $('#wLearn').checked = ws.learn; $('#wSearch').checked = ws.search;
+  if(act !== $('#wInt')) $('#wInt').value = String([30,60,300,900,3600].includes(ws.interval) ? ws.interval : 60);
+  if(act !== $('#wDaily')) $('#wDaily').value = ws.daily;
+  if(act !== $('#wTopics')) $('#wTopics').value = ws.topics;
+  if(act !== $('#wLang')) $('#wLang').value = ws.lang;
+  $('#wMore').style.opacity = ws.net ? 1 : .45;
+  $$('#wMore input, #wMore select').forEach(e => e.disabled = !ws.net);
+  const last = R.last ? `อ่านล่าสุด: <a href="${esc(R.last.url)}" target="_blank" rel="noopener">${esc(R.last.title)}</a> (${fmtNum(R.last.chars)} ตัวอักษร · ${when(R.last.ts)})<br>` : '';
+  const nxt = ws.net && ws.learn && R.next ? Math.max(0, Math.round(R.next - Date.now()/1000)) : null;
+  $('#wStatus').innerHTML = !ws.net ? 'ปิดอยู่ — แซนด์ทำงานออฟไลน์ 100%'
+    : `${ws.learn ? `🌱 ${esc(R.state)}${nxt != null && R.state.startsWith('รอ') ? ` (อีก ${nxt} วินาที) <button class="btn sm" id="wNow">อ่านเลยตอนนี้</button>` : ''}<br>` : ''}${last}`
+      + `วันนี้อ่านเอง <b>${W.today}</b>/${ws.daily} · เก็บไว้ทั้งหมด <b>${fmtNum(W.total)}</b> บทความ (${fmtNum(W.chars/1000)} พันตัวอักษร)`
+      + (R.error ? `<div class="err">${esc(R.error)}</div>` : '');
+  $('#wNow')?.addEventListener('click', async () => { await post('/api/web/read_now'); setTimeout(loadState, 2500); });
+  $('#wList').innerHTML = W.pages.map(p => `<div class="item"><button class="del" data-wdel="${p.id}" title="ลืมบทความนี้">×</button>
+      <a href="${esc(p.url)}" target="_blank" rel="noopener">${esc(p.title)}</a>
+      <div class="meta"><span class="tag">${p.source === 'learn' ? '🌱 อ่านเอง' : '🔎 ค้นตอนตอบ'}</span> ${fmtNum(p.chars)} ตัวอักษร · ${when(p.ts)}</div></div>`).join('');
+  $$('[data-wdel]').forEach(b => b.onclick = async () => { await post('/api/web/delete', {id:+b.dataset.wdel}); loadState(); });
+}
+const wset = body => post('/api/web/settings', body).then(loadState);
+$('#wNet').onchange = e => wset({net: e.target.checked});
+$('#wLearn').onchange = e => wset({learn: e.target.checked});
+$('#wSearch').onchange = e => wset({search: e.target.checked});
+$('#wInt').onchange = e => wset({interval: +e.target.value});
+$('#wDaily').onchange = e => wset({daily: +e.target.value});
+$('#wTopics').onchange = e => wset({topics: e.target.value});
+$('#wLang').onchange = e => wset({lang: e.target.value});
 
 /* ---------- brain picker ---------- */
 const gb = b => (b / 1e9).toFixed(b > 1e10 ? 0 : 1) + ' GB';
