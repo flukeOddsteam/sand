@@ -14,6 +14,7 @@ import sqlite3
 import sys
 import threading
 import time
+import urllib.parse
 import webbrowser
 from html import escape as html_escape
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
@@ -658,8 +659,10 @@ def build_big_prompt(user_text, think_on, tk, budget=3000, web_pages=None):
     if found:
         sys_txt += "\n\nข้อความที่ผู้ใช้เคยให้อ่าน ส่วนที่อาจเกี่ยวข้อง:\n" + "\n---\n".join(f"[{t}] {p}" for t, p in found)
     if web_pages:
-        sys_txt += ("\n\nผลค้นจากวิกิพีเดียเมื่อสักครู่ (ใช้ตอบได้ ถ้าใช้ข้อมูลส่วนนี้ให้บอกชื่อบทความที่อ้างอิงท้ายคำตอบ):\n"
-                    + "\n---\n".join(f"[{p['title']}] {p['text'][:1800]}" for p in web_pages))
+        sys_txt += ("\n\nผลค้นจากอินเทอร์เน็ตเมื่อสักครู่ (ใช้ตอบได้ ระวังข้อมูลที่ขัดกันเอง "
+                    "ถ้าใช้ข้อมูลส่วนนี้ให้บอกชื่อเว็บหรือบทความที่อ้างอิงท้ายคำตอบ):\n"
+                    + "\n---\n".join(f"[{p['title']} — {urllib.parse.urlparse(p['url']).netloc}] {p['text'][:1800]}"
+                                       for p in web_pages))
     hist = q("SELECT role,content FROM messages ORDER BY id DESC LIMIT 9")[::-1]
     head = f"<|im_start|>system\n{sys_txt}<|im_end|>\n"
     turns = [f"<|im_start|>{'user' if m['role'] == 'user' else 'assistant'}\n{m['content']}<|im_end|>\n" for m in hist]
@@ -762,7 +765,49 @@ def web_settings():
         "daily": int(float(setting("web_daily", "200"))),
         "topics": setting("web_topics", ""),
         "lang": setting("web_lang", "th"),
+        "engine": setting("web_engine", "both"),          # both | web | wiki
+        "provider": setting("web_provider", "ddg"),       # ddg | tavily
+        "has_key": bool(setting("tavily_key", "")),
     }
+
+
+def gather_pages(query, ws, want=2, fallback_q=None):
+    """ค้นตามแหล่งที่ตั้งไว้ แล้วเปิดอ่านจนได้ want หน้า คืน (pages, hits, notes)"""
+    pages, hits, notes = [], [], []
+    if ws["engine"] in ("both", "web"):
+        try:
+            hits = WEB.web_search(query, 8, ws["provider"], setting("tavily_key", ""))
+            if not hits and fallback_q:
+                hits = WEB.web_search(fallback_q, 8, ws["provider"], setting("tavily_key", ""))
+        except Exception as e:
+            notes.append(f"ค้นทั้งเว็บไม่สำเร็จ: {e}")
+        seen_domains = set()
+        for h in hits:
+            if len(pages) >= want:
+                break
+            dom = urllib.parse.urlparse(h["url"]).netloc
+            if dom in seen_domains:
+                continue
+            try:
+                pg = WEB.fetch_page(h["url"])
+                if len(pg["text"]) >= 300:
+                    pg["title"] = pg["title"] or h["title"]
+                    pages.append(pg)
+                    seen_domains.add(dom)
+            except Exception as e:
+                notes.append(f"{dom}: {e}")
+    if len(pages) < want and ws["engine"] in ("both", "wiki"):
+        try:
+            wh = WEB.search(query, ws["lang"], 4) or (WEB.search(fallback_q, ws["lang"], 4) if fallback_q else [])
+            for h in wh:
+                if len(pages) >= want:
+                    break
+                pg = WEB.page(h["title"], ws["lang"])
+                if pg and len(pg["text"]) > 100 and pg["url"] not in {p["url"] for p in pages}:
+                    pages.append(pg)
+        except Exception as e:
+            notes.append(f"Wikipedia: {e}")
+    return pages, hits, notes
 
 
 def save_page(pg, source, lang="th"):
@@ -796,15 +841,11 @@ def search_before_answer(user_text, m, tk, meta, write):
             query = B.quick_text(m, tk, f"<|im_start|>system\n{sys_q}<|im_end|>\n<|im_start|>user\n"
                                          f"{user_text}<|im_end|>\n{tail}", max_new=20)
         query = query.strip(" \"'“”`") or user_text
-        write({"web": {"stage": "search", "q": query}})
-        hits = WEB.search(query, ws["lang"], 4) or WEB.search(user_text, ws["lang"], 4)
-        pages = []
-        for h in hits[:2]:
-            pg = WEB.page(h["title"], ws["lang"])
-            if pg and len(pg["text"]) > 100:
-                pages.append(pg)
-                save_page(pg, "search", ws["lang"])
-        write({"web": {"stage": "read", "q": query,
+        write({"web": {"stage": "search", "q": query, "engine": ws["engine"]}})
+        pages, hits, notes = gather_pages(query, ws, 2, fallback_q=user_text)
+        for pg in pages:
+            save_page(pg, "search", ws["lang"])
+        write({"web": {"stage": "read", "q": query, "notes": notes[:3],
                        "pages": [{"title": p["title"], "url": p["url"]} for p in pages]}})
         return pages
     except Exception as e:
@@ -822,12 +863,30 @@ def _read_one(ws):
             import random
             topic = random.choice(topics)
             READER["state"] = f"ค้นหัวข้อ “{topic}”"
-            have = {r["title"] for r in q("SELECT title FROM web_pages")}
-            hits = [h for h in WEB.search(topic, ws["lang"], 20) if h["title"] not in have]
-            if not hits:
-                topics.remove(topic)
-                continue
-            pg = WEB.page(random.choice(hits[:10])["title"], ws["lang"])
+            have_t = {r["title"] for r in q("SELECT title FROM web_pages")}
+            have_u = {r["url"] for r in q("SELECT url FROM web_pages")}
+            pg = None
+            if ws["engine"] in ("both", "web") and (ws["engine"] == "web" or random.random() < 0.6):
+                try:
+                    hits = [h for h in WEB.web_search(topic, 10, ws["provider"], setting("tavily_key", ""))
+                            if h["url"] not in have_u]
+                    random.shuffle(hits)
+                    for h in hits[:3]:
+                        try:
+                            cand = WEB.fetch_page(h["url"])
+                            if len(cand["text"]) >= 300:
+                                pg = cand
+                                break
+                        except Exception:
+                            continue
+                except Exception as e:
+                    READER["error"] = f"ค้นทั้งเว็บไม่สำเร็จ: {e}"
+            if pg is None and ws["engine"] in ("both", "wiki"):
+                hits = [h for h in WEB.search(topic, ws["lang"], 20) if h["title"] not in have_t]
+                if not hits:
+                    topics.remove(topic)
+                    continue
+                pg = WEB.page(random.choice(hits[:10])["title"], ws["lang"])
         else:
             READER["state"] = "สุ่มบทความ"
             pg = WEB.random_page(ws["lang"])
@@ -853,6 +912,7 @@ def reader_loop():
             time.sleep(1)
             continue
         try:
+            READER["error"] = None
             pg = _read_one(ws)
             if pg:
                 READER.update(last={"title": pg["title"], "url": pg["url"], "chars": len(pg["text"]), "ts": time.time()},
@@ -1111,6 +1171,12 @@ class Handler(BaseHTTPRequestHandler):
                 set_setting("web_topics", str(d["topics"])[:500])
             if d.get("lang") in ("th", "en"):
                 set_setting("web_lang", d["lang"])
+            if d.get("engine") in ("both", "web", "wiki"):
+                set_setting("web_engine", d["engine"])
+            if d.get("provider") in ("ddg", "tavily"):
+                set_setting("web_provider", d["provider"])
+            if "tavily_key" in d:
+                set_setting("tavily_key", str(d["tavily_key"]).strip()[:200])
             if d.get("net") or d.get("learn"):
                 event("web", "อนุญาตให้แซนด์ใช้อินเทอร์เน็ต" if d.get("net") else "แซนด์เริ่มออกไปอ่านเอง")
             ok()

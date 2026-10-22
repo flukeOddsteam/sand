@@ -399,10 +399,17 @@ details.ref summary{cursor:pointer;font-size:13px;color:var(--sand)}
       <h3>🌐 เรียนรู้จากอินเทอร์เน็ต</h3>
       <div class="card">
         <label class="switch"><input type="checkbox" id="wNet"><span>อนุญาตให้แซนด์ใช้อินเทอร์เน็ต
-          <small>เปิดแล้วแซนด์จะไม่ออฟไลน์ 100%: สิ่งที่ค้นจะถูกส่งไปที่ Wikipedia (อ่านผ่าน API ทางการ ไม่เกิน 1 ครั้งต่อวินาที)</small></span></label>
+          <small>เปิดแล้วแซนด์จะไม่ออฟไลน์ 100%: คำค้นจะถูกส่งไปที่เครื่องมือค้นหา และแซนด์จะเปิดอ่านเว็บต่างๆ (เคารพ robots.txt ของแต่ละเว็บ)</small></span></label>
         <div id="wMore">
+          <div class="wrow">
+            <label>อ่านจาก<select id="wEngine"><option value="both">ทั้งเว็บ + Wikipedia</option><option value="web">ทั้งเว็บเท่านั้น</option><option value="wiki">Wikipedia เท่านั้น</option></select></label>
+            <label>เครื่องมือค้นหา<select id="wProv"><option value="ddg">DuckDuckGo (ฟรี ไม่ต้องสมัคร)</option><option value="tavily">Tavily (ต้องมี API key)</option></select></label>
+          </div>
+          <div class="wrow hidden" id="wKeyRow" style="grid-template-columns:1fr">
+            <label>Tavily API key (สมัครฟรีที่ tavily.com · 1,000 ครั้ง/เดือน · เก็บไว้ในเครื่องคุณเท่านั้น)<input id="wKey" type="password" autocomplete="off" placeholder="tvly-…"></label>
+          </div>
           <label class="switch"><input type="checkbox" id="wLearn"><span>🌱 ให้แซนด์ทารกออกไปอ่านเอง
-            <small>หยิบบทความ Wikipedia มาอ่านทีละเรื่อง แล้วเอาไปฝึกสมองอัตโนมัติ</small></span></label>
+            <small>ถ้าตั้งหัวข้อไว้ จะค้นหัวข้อนั้นจากเว็บและ Wikipedia แล้วอ่านทีละหน้า · ถ้าไม่ตั้ง จะสุ่มบทความ Wikipedia · อ่านแล้วเอาไปฝึกสมองอัตโนมัติ</small></span></label>
           <div class="wrow">
             <label>อ่านทุก<select id="wInt"><option value="30">30 วินาที</option><option value="60">1 นาที</option><option value="300">5 นาที</option><option value="900">15 นาที</option><option value="3600">1 ชั่วโมง</option></select></label>
             <label>ไม่เกินวันละ (บทความ)<input type="number" id="wDaily" min="1" max="5000"></label>
@@ -411,8 +418,8 @@ details.ref summary{cursor:pointer;font-size:13px;color:var(--sand)}
             <label>หัวข้อที่อยากให้อ่าน (คั่นด้วย , · เว้นว่าง = สุ่ม)<input id="wTopics" placeholder="เช่น ดาราศาสตร์, ประวัติศาสตร์ไทย, คอมพิวเตอร์"></label>
             <label>ภาษา<select id="wLang"><option value="th">ไทย</option><option value="en">อังกฤษ</option></select></label>
           </div>
-          <label class="switch" style="margin-top:12px"><input type="checkbox" id="wSearch"><span>🎓 ให้สมองโตค้นวิกิพีเดียก่อนตอบ
-            <small>คิดคำค้นเอง อ่าน 2 บทความ ตอบพร้อมบอกที่มา แล้วจำไว้ใช้ตอนออฟไลน์ · พิมพ์ “ค้น: …” เพื่อสั่งค้นทุกครั้ง</small></span></label>
+          <label class="switch" style="margin-top:12px"><input type="checkbox" id="wSearch"><span>🎓 ให้สมองโตค้นก่อนตอบ
+            <small>คิดคำค้นเอง เปิดอ่าน 2 หน้าเว็บ ตอบพร้อมบอกที่มา แล้วจำไว้ใช้ตอนออฟไลน์ · พิมพ์ “ค้น: …” เพื่อสั่งค้นทุกครั้ง</small></span></label>
           <div class="wstatus" id="wStatus"></div>
         </div>
       </div>
@@ -624,10 +631,12 @@ async function send(){
         if(d.web){
           const w = d.web;
           if(!row.webnote){ row.webnote = document.createElement('div'); row.webnote.className = 'webnote'; row.body.before(row.webnote); }
-          const links = (w.pages || []).map(p => `<a href="${esc(p.url)}" target="_blank" rel="noopener">${esc(p.title)}</a>`).join(', ');
+          const dom = u => { try { return new URL(u).hostname.replace(/^www\./, ''); } catch { return ''; } };
+          const links = (w.pages || []).map(p => `<a href="${esc(p.url)}" target="_blank" rel="noopener">${esc(p.title)}</a> <span class="muted">(${esc(dom(p.url))})</span>`).join(', ');
           row.webnote.innerHTML = w.stage === 'thinking' ? '🔎 กำลังคิดคำค้น…'
-            : w.stage === 'search' ? `🔎 ค้นวิกิพีเดีย “${esc(w.q)}”…`
-            : w.stage === 'read' ? (links ? `🔎 ค้น “${esc(w.q)}” → อ่าน: ${links}` : `🔎 ค้น “${esc(w.q)}” แต่ไม่เจอบทความที่ตรง`)
+            : w.stage === 'search' ? `🔎 กำลังค้น “${esc(w.q)}” และเปิดอ่านหน้าเว็บ…`
+            : w.stage === 'read' ? (links ? `🔎 ค้น “${esc(w.q)}” → อ่าน: ${links}` : `🔎 ค้น “${esc(w.q)}” แต่เปิดอ่านหน้าที่ตรงไม่ได้`)
+              + ((w.notes || []).length ? `<br><span class="muted">${w.notes.map(esc).join(' · ')}</span>` : '')
             : w.stage === 'remembered' ? '📚 เคยอ่านเรื่องนี้แล้ว ตอบจากความจำ'
             : `<span class="err">${esc(w.error || '')}</span>`;
           $('#liveStatus').innerHTML = row.webnote.innerHTML;
@@ -660,7 +669,8 @@ async function send(){
           if(!full) row.body.textContent = '…';
           if(tbox) tbox.open = false;
           if(row.sources){ const sc = document.createElement('div'); sc.className = 'srcs';
-            sc.innerHTML = 'ที่มา: ' + row.sources.map(p => `<a href="${esc(p.url)}" target="_blank" rel="noopener">${esc(p.title)}</a> (Wikipedia, CC BY-SA)`).join(' · ');
+            sc.innerHTML = 'ที่มา: ' + row.sources.map(p => { let h = ''; try { h = new URL(p.url).hostname.replace(/^www\./, ''); } catch {}
+              return `<a href="${esc(p.url)}" target="_blank" rel="noopener">${esc(p.title)}</a> (${esc(h)}${h.endsWith('wikipedia.org') ? ', CC BY-SA' : ''})`; }).join(' · ');
             row.body.after(sc); }
           setActs(row, {id:d.id, rating:0, has_trace:true});
           live.summary = d.summary; renderSummary();
@@ -1100,6 +1110,10 @@ function renderWeb(){
   if(act !== $('#wDaily')) $('#wDaily').value = ws.daily;
   if(act !== $('#wTopics')) $('#wTopics').value = ws.topics;
   if(act !== $('#wLang')) $('#wLang').value = ws.lang;
+  if(act !== $('#wEngine')) $('#wEngine').value = ws.engine;
+  if(act !== $('#wProv')) $('#wProv').value = ws.provider;
+  $('#wKeyRow').classList.toggle('hidden', ws.provider !== 'tavily');
+  if(act !== $('#wKey')) $('#wKey').placeholder = ws.has_key ? '•••••••• (บันทึกแล้ว · พิมพ์ใหม่เพื่อเปลี่ยน)' : 'tvly-…';
   $('#wMore').style.opacity = ws.net ? 1 : .45;
   $$('#wMore input, #wMore select').forEach(e => e.disabled = !ws.net);
   const last = R.last ? `อ่านล่าสุด: <a href="${esc(R.last.url)}" target="_blank" rel="noopener">${esc(R.last.title)}</a> (${fmtNum(R.last.chars)} ตัวอักษร · ${when(R.last.ts)})<br>` : '';
@@ -1110,7 +1124,7 @@ function renderWeb(){
       + (R.error ? `<div class="err">${esc(R.error)}</div>` : '');
   $('#wNow')?.addEventListener('click', async () => { await post('/api/web/read_now'); setTimeout(loadState, 2500); });
   $('#wList').innerHTML = W.pages.map(p => `<div class="item"><button class="del" data-wdel="${p.id}" title="ลืมบทความนี้">×</button>
-      <a href="${esc(p.url)}" target="_blank" rel="noopener">${esc(p.title)}</a>
+      <a href="${esc(p.url)}" target="_blank" rel="noopener">${esc(p.title)}</a> <span class="meta">${esc((() => { try { return new URL(p.url).hostname.replace(/^www\./, ''); } catch { return ''; } })())}</span>
       <div class="meta"><span class="tag">${p.source === 'learn' ? '🌱 อ่านเอง' : '🔎 ค้นตอนตอบ'}</span> ${fmtNum(p.chars)} ตัวอักษร · ${when(p.ts)}</div></div>`).join('');
   $$('[data-wdel]').forEach(b => b.onclick = async () => { await post('/api/web/delete', {id:+b.dataset.wdel}); loadState(); });
 }
@@ -1122,6 +1136,9 @@ $('#wInt').onchange = e => wset({interval: +e.target.value});
 $('#wDaily').onchange = e => wset({daily: +e.target.value});
 $('#wTopics').onchange = e => wset({topics: e.target.value});
 $('#wLang').onchange = e => wset({lang: e.target.value});
+$('#wEngine').onchange = e => wset({engine: e.target.value});
+$('#wProv').onchange = e => wset({provider: e.target.value});
+$('#wKey').onchange = e => { wset({tavily_key: e.target.value}); e.target.value = ''; };
 
 /* ---------- brain picker ---------- */
 const gb = b => (b / 1e9).toFixed(b > 1e10 ? 0 : 1) + ' GB';
