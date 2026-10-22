@@ -1849,11 +1849,16 @@ def main():
     try:
         srv = ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
     except OSError as e:
-        if e.errno in (48, 98):                    # ช่องถูกใช้อยู่ (macOS / Linux)
+        # ช่องถูกใช้อยู่: 48 = macOS, 98 = Linux, 10048 / 10013 = Windows
+        if e.errno in (48, 98, 10048, 10013) or getattr(e, "winerror", None) in (10048, 10013):
             print("=" * 56)
             print(f"  แซนด์เปิดอยู่แล้ว หรือมีโปรแกรมอื่นใช้ช่อง {PORT} อยู่")
             print(f"  · ถ้าแซนด์เปิดอยู่แล้ว เข้าได้ที่ http://127.0.0.1:{PORT}")
-            print(f"  · ถ้าอยากปิดตัวเก่าแล้วเปิดใหม่ รัน:  lsof -ti :{PORT} | xargs kill")
+            if os.name == "nt":
+                print(f"  · ถ้าอยากปิดตัวเก่าแล้วเปิดใหม่ รัน:  netstat -ano | findstr :{PORT}")
+                print("    แล้ว  taskkill /PID <เลขท้ายสุด> /F")
+            else:
+                print(f"  · ถ้าอยากปิดตัวเก่าแล้วเปิดใหม่ รัน:  lsof -ti :{PORT} | xargs kill")
             print("=" * 56)
             sys.exit(1)
         raise

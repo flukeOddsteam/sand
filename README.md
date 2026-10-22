@@ -21,7 +21,21 @@
 **ปิด:** กด `Ctrl + C` ใน Terminal (สมองถูกบันทึกให้อัตโนมัติ)
 **อัปเดตเป็นรุ่นล่าสุด:** `git pull` แล้วเปิดใหม่
 **ถ้าขึ้นว่าแซนด์เปิดอยู่แล้ว:** `lsof -ti :7777 | xargs kill` แล้วเปิดใหม่
-(Windows ใช้ `start-windows.bat` · Linux ใช้ `start-linux.sh`)
+(Linux ใช้ `start-linux.sh`)
+
+## เริ่มใช้งาน (Windows)
+
+1. ต้องมี **Python 3.10–3.14 รุ่น 64-bit** จาก https://www.python.org/downloads/windows/ (แนะนำ 3.12 เลือก "Windows installer (64-bit)" และติ๊ก **Add python.exe to PATH**)
+2. เปิด cmd แล้วรัน (หรือดับเบิลคลิก `start-windows.bat`)
+   ```
+   cd %USERPROFILE%\Desktop\sand
+   start-windows.bat
+   ```
+   สคริปต์หา Python ที่ใช้ได้ให้เอง (ผ่านตัวเรียก `py`) ถ้า `.venv` เดิมใช้ Python ที่ไม่รองรับจะสร้างใหม่ให้ ถ้ามีการ์ดจอ NVIDIA จะลองติดตั้ง PyTorch รุ่น GPU ก่อน
+3. เบราว์เซอร์จะเปิด http://127.0.0.1:7777
+
+**ถ้าขึ้นว่าหา torch ไม่เจอ (`from versions: none`):** แปลว่า Python เป็นรุ่น 32-bit หรือเวอร์ชันที่ PyTorch ไม่รองรับ ติดตั้ง Python 3.12 (64-bit) แล้วรันใหม่
+**ถ้าขึ้นว่าแซนด์เปิดอยู่แล้ว:** `netstat -ano | findstr :7777` แล้ว `taskkill /PID <เลขท้ายสุด> /F`
 
 ## แท็บต่างๆ ในแอป
 
