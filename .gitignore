@@ -1,0 +1,12 @@
+# สภาพแวดล้อม Python (สร้างใหม่ได้ด้วย start-mac.command)
+.venv/
+__pycache__/
+*.pyc
+
+# สมองที่ฝึกแล้วและข้อมูลส่วนตัว (บทสนทนา สิ่งที่สอน) — อยู่บนเครื่องเท่านั้น
+sand_brain.pt
+sand_brain.pt.tmp
+sand.db
+sand.db-journal
+
+.DS_Store

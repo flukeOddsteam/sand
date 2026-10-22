@@ -1,0 +1,1026 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>แซนด์ · Sand</title>
+<style>
+:root{
+  --bg:#15110d; --panel:#1f1914; --panel2:#29211a; --deep:#16120e; --line:#3a2f24;
+  --sand:#e8b86b; --sand2:#c98f3d; --teal:#6cc3b5; --rose:#e07a6a; --green:#7bd88f;
+  --text:#f3e9dc; --muted:#a8988a;
+  --font:"Noto Sans Thai","Leelawadee UI","Sarabun","Tahoma",system-ui,sans-serif;
+  --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+  --math:"Cambria Math","STIX Two Math","Latin Modern Math","Times New Roman",Georgia,serif;
+}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font-family:var(--font);font-size:15px}
+button,select,textarea,input{font-family:inherit;font-size:inherit;color:inherit}
+.hidden{display:none!important}
+@keyframes pulse{50%{opacity:.3}}
+
+/* header */
+header{display:flex;align-items:center;gap:14px;padding:10px 18px;border-bottom:1px solid var(--line);background:linear-gradient(180deg,#1d1712,#15110d);height:77px}
+#orb{width:56px;height:56px;flex:none}
+.id .name{font-size:20px;font-weight:700}
+.id .name span{font-size:13px;font-weight:600;color:var(--bg);background:var(--sand);border-radius:99px;padding:2px 9px;margin-left:6px;vertical-align:3px}
+.bar{width:220px;max-width:30vw;height:6px;background:var(--panel2);border-radius:9px;margin:6px 0 3px;overflow:hidden}
+.bar i{display:block;height:100%;width:0;background:linear-gradient(90deg,var(--sand2),var(--sand));transition:width .6s}
+.sub{font-size:12px;color:var(--muted)}
+.spacer{flex:1}
+.trainpill{display:flex;align-items:center;gap:10px;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:6px 8px 6px 12px;font-size:12.5px}
+.trainpill .dot{width:9px;height:9px;border-radius:50%;background:var(--muted)}
+.trainpill.on .dot{background:var(--green);animation:pulse 1.2s infinite}
+.trainpill b{color:var(--sand);font-weight:600}
+.btn{background:var(--panel2);border:1px solid var(--line);border-radius:9px;padding:7px 12px;cursor:pointer}
+.btn:hover{border-color:var(--sand2)}
+.btn.sm{padding:4px 10px;font-size:13px}
+.btn.primary{background:var(--sand);color:#1b140d;border-color:var(--sand);font-weight:700}
+.btn.danger:hover{border-color:var(--rose);color:var(--rose)}
+.btn:disabled{opacity:.5;cursor:default}
+
+main{display:grid;grid-template-columns:minmax(0,1fr) 470px;height:calc(100% - 77px)}
+/* chat */
+.chat{display:flex;flex-direction:column;min-height:0;border-right:1px solid var(--line)}
+#msgs{flex:1;overflow-y:auto;padding:22px 22px 10px}
+.msg{max-width:760px;margin:0 auto 16px;display:flex;gap:10px}
+.msg.user{justify-content:flex-end}
+.mwrap{max-width:85%;min-width:0}
+.user .mwrap{display:flex;justify-content:flex-end}
+.bubble{padding:10px 14px;border-radius:14px;line-height:1.65;overflow-wrap:anywhere}
+.user .bubble{background:var(--sand2);color:#1b140d;border-bottom-right-radius:4px}
+.assistant .bubble{background:var(--panel);border:1px solid var(--line);border-bottom-left-radius:4px}
+.avatar{width:28px;height:28px;border-radius:50%;flex:none;background:radial-gradient(circle at 35% 35%,#ffe3a8,var(--sand2) 60%,#6b4a1f);margin-top:3px}
+.thinking .bubble:empty::after{content:"แซนด์กำลังคิด…";color:var(--muted);animation:pulse 1.2s infinite}
+.acts{display:flex;gap:4px;margin-top:6px;flex-wrap:wrap}
+.acts button{background:transparent;border:1px solid var(--line);border-radius:7px;padding:1px 8px;cursor:pointer;opacity:.6;font-size:12.5px}
+.acts button:hover{opacity:1}
+.acts button.on{opacity:1;background:var(--panel2);border-color:var(--sand2)}
+.fix{display:flex;gap:6px;margin-top:6px}
+.fix input{flex:1;background:var(--deep);border:1px solid var(--line);border-radius:8px;padding:5px 9px;outline:0;font-size:13.5px}
+.empty{max-width:540px;margin:9vh auto 0;text-align:center;color:var(--muted);line-height:1.85}
+.empty b{color:var(--sand);font-size:22px;display:block;margin-bottom:6px}
+form#f{display:flex;gap:10px;padding:12px 22px 18px;max-width:806px;width:100%;margin:0 auto}
+textarea#in{flex:1;resize:none;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:11px 14px;outline:0;max-height:120px;line-height:1.5}
+textarea#in:focus{border-color:var(--sand2)}
+form#f button{background:var(--sand);color:#1b140d;border:0;border-radius:12px;padding:0 20px;font-weight:700;cursor:pointer}
+form#f button:disabled{opacity:.5}
+
+/* side */
+aside{display:flex;flex-direction:column;min-height:0;background:#18130f}
+nav{display:flex;border-bottom:1px solid var(--line)}
+nav button{flex:1;background:transparent;border:0;padding:12px 2px;cursor:pointer;color:var(--muted);border-bottom:2px solid transparent;font-size:13.5px;white-space:nowrap}
+nav button.on{color:var(--sand);border-bottom-color:var(--sand)}
+.tab{display:none;overflow-y:auto;padding:14px 16px 30px;flex:1}
+.tab.on{display:block}
+h3{font-size:12.5px;color:var(--muted);font-weight:600;margin:18px 0 9px;letter-spacing:.4px}
+h3:first-child{margin-top:0}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:12px;margin-bottom:10px}
+.card h4{margin:0 0 8px;font-size:14px;color:var(--text);display:flex;justify-content:space-between;gap:8px;align-items:baseline}
+.card h4 small{color:var(--muted);font-weight:400;font-size:12px}
+.muted{color:var(--muted);font-size:13px;line-height:1.7}
+.stats{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+.stat{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:9px 10px}
+.stat .v{font-size:19px;font-weight:700;color:var(--sand);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.stat .k{font-size:11.5px;color:var(--muted)}
+.headrow{display:flex;justify-content:space-between;align-items:center;margin:18px 0 9px}
+.headrow h3{margin:0}
+.ctl{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:12px}
+.ctl label{font-size:12px;color:var(--muted)}
+.ctl label b{color:var(--sand);float:right;font-weight:600}
+.ctl input[type=range]{width:100%;accent-color:var(--sand2)}
+
+/* math */
+.math{font-family:var(--math);font-size:17px;display:flex;flex-wrap:wrap;align-items:center;row-gap:6px;margin:8px 0 2px;padding:9px 11px;background:var(--deep);border-radius:9px;overflow-x:auto}
+.math.sub{font-size:15px;margin-top:3px;color:var(--muted);background:transparent;padding:2px 11px}
+.math .lhs{color:var(--sand);font-style:italic}
+.mvar{color:var(--teal);font-style:italic;cursor:help}
+.mval,.mn{color:var(--text)}
+.mo{margin:0 5px;color:var(--muted)}
+.mp,.mb{color:var(--muted);font-size:1.12em}
+.mf{font-style:normal}
+.mch{font-family:var(--font);color:var(--sand);font-size:.9em;margin:0 1px}
+.math sup{font-size:.68em;align-self:flex-start;margin-left:1px}
+.math sub{font-size:.66em;align-self:flex-end}
+.bigop{font-size:1.35em;margin:0 2px;display:inline-flex;align-items:flex-end}
+.frac{display:inline-flex;flex-direction:column;align-items:center;vertical-align:middle;margin:0 3px;font-size:.92em}
+.frac>span{display:inline-flex;align-items:center;padding:0 4px}
+.frac>span:first-child{border-bottom:1.3px solid currentColor;padding-bottom:2px}
+.frac>span:last-child{padding-top:2px}
+.sqrt{display:inline-flex;align-items:stretch;margin:0 1px}
+.sqrt .rad{width:.62em;min-height:1.2em;flex:none;align-self:stretch;overflow:visible}
+.sqrt .rad path{fill:none;stroke:var(--muted);stroke-width:1.3px;stroke-linejoin:round}
+.sqrt .under{display:inline-flex;align-items:center;border-top:1.3px solid var(--muted);padding:3px 4px 1px 2px}
+.cases{display:inline-flex;align-items:center}
+.cases .brace{font-size:2.4em;line-height:1;font-weight:200;margin-right:5px;color:var(--muted)}
+.cases .rows{display:inline-flex;flex-direction:column;gap:4px}
+.cases .rows>span{display:inline-flex;align-items:center;flex-wrap:wrap}
+.cases small{font-family:var(--font);font-style:normal;color:var(--muted);font-size:12px;margin:0 6px}
+.math .eq{color:var(--sand);font-weight:700;margin-left:2px}
+.say{font-size:13px;color:var(--muted);line-height:1.6;margin-top:6px}
+.say b{color:var(--text);font-weight:600}
+
+/* live brain */
+.status{font-size:13px;color:var(--muted);margin-bottom:10px;min-height:20px}
+.status b{color:var(--sand)}
+.stream{font-size:18px;line-height:1.9;background:var(--deep);border-radius:9px;padding:10px 12px;min-height:50px;word-break:break-all}
+.stream span{border-radius:3px;cursor:pointer;padding:0 .5px}
+.stream span.sel{outline:1.5px solid var(--text);outline-offset:1px}
+.stream span.stop{color:var(--muted);font-size:13px}
+.legend{display:flex;gap:6px;align-items:center;font-size:11.5px;color:var(--muted);margin-top:6px}
+.legend .grad{flex:1;height:6px;border-radius:9px;background:linear-gradient(90deg,rgba(224,122,106,.85),rgba(232,184,107,.45),rgba(123,216,143,.6))}
+.ctxview{font-size:16px;line-height:1.8;background:var(--deep);border-radius:9px;padding:8px 10px;word-break:break-all;font-family:var(--font)}
+.ctxview span{border-radius:2px}
+.ctxview .nl{color:var(--muted);font-size:11px}
+.bars .row{display:grid;grid-template-columns:42px 1fr 98px;gap:8px;align-items:center;font-size:13px;margin-bottom:5px}
+.bars .row .c{font-size:17px;text-align:center;background:var(--deep);border-radius:6px;padding:1px 0}
+.bars .row .t{height:14px;background:var(--panel2);border-radius:4px;overflow:hidden}
+.bars .row .t i{display:block;height:100%;background:var(--sand2);border-radius:4px;transition:width .15s}
+.bars .row.pick .t i{background:var(--green)}
+.bars .row.pick .c{outline:1.5px solid var(--green)}
+.bars .row .n{font-family:var(--mono);font-size:11.5px;color:var(--muted);text-align:right}
+.layers{display:flex;gap:6px;align-items:flex-end;height:70px;padding:6px 4px 0}
+.layers div{flex:1;background:linear-gradient(0deg,var(--sand2),var(--sand));border-radius:4px 4px 0 0;position:relative;min-height:3px;transition:height .15s}
+.layers div span{position:absolute;bottom:-17px;left:0;right:0;text-align:center;font-size:10.5px;color:var(--muted)}
+.layers div em{position:absolute;top:-16px;left:0;right:0;text-align:center;font-size:10px;color:var(--muted);font-style:normal}
+canvas.chart{width:100%;height:150px;display:block;background:var(--deep);border-radius:9px}
+canvas.spark{width:100%;height:42px;display:block;margin-top:8px}
+
+/* training */
+.samples .s{font-size:13px;padding:7px 0;border-bottom:1px dashed var(--line);line-height:1.55}
+.samples .s .meta{font-size:11px;color:var(--muted)}
+.samples .s b{color:var(--sand);font-weight:500}
+.err{color:var(--rose);font-size:13px}
+.sizes{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:8px 0}
+.sizes label{background:var(--deep);border:1px solid var(--line);border-radius:10px;padding:8px;font-size:12px;color:var(--muted);cursor:pointer}
+.sizes input{margin-right:4px}
+.sizes b{color:var(--text);font-size:13px}
+.sizes label:has(input:checked){border-color:var(--sand2)}
+
+/* formulas */
+.intro{font-size:13px;color:var(--muted);line-height:1.65;margin:0 0 12px}
+.fcard{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:12px 12px 10px;margin-bottom:10px}
+.fcard.bad{border-color:var(--rose)}
+.ahead{display:flex;justify-content:space-between;align-items:center;gap:8px}
+.ahead b{font-size:14.5px}
+.tag{font-size:10.5px;background:var(--panel2);border-radius:5px;padding:1px 6px;margin-left:6px;color:var(--teal)}
+.tag.bi{color:var(--sand)}
+.fval{font-size:19px;font-weight:700;color:var(--sand);white-space:nowrap}
+.fval small{font-size:12px;color:var(--muted);font-weight:500;margin-left:3px}
+.fdesc{font-size:12.5px;color:var(--muted);margin:6px 0 0;line-height:1.55}
+.vrow{display:flex;flex-wrap:wrap;gap:5px;margin-top:8px}
+.vchip{font-size:11.5px;background:var(--panel2);border-radius:6px;padding:2px 7px;color:var(--muted);cursor:help}
+.vchip b{color:var(--teal);font-family:var(--mono);font-weight:500}
+.ferr{font-size:12.5px;color:var(--rose);margin-top:6px}
+.abtn{display:flex;gap:6px;margin-top:9px;flex-wrap:wrap}
+.abtn button{font-size:12.5px;padding:4px 10px}
+details.ref{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:8px 12px;margin-top:14px}
+details.ref summary{cursor:pointer;font-size:13px;color:var(--sand)}
+.reftbl{width:100%;border-collapse:collapse;font-size:12.5px;margin-top:8px}
+.reftbl td{padding:4px;border-bottom:1px dashed var(--line);vertical-align:top}
+.reftbl td:first-child{font-family:var(--mono);color:var(--teal);white-space:nowrap}
+.reftbl td:last-child{text-align:right;color:var(--sand);white-space:nowrap}
+
+/* data */
+.form{display:flex;flex-direction:column;gap:7px}
+.form input,.form textarea{background:var(--deep);border:1px solid var(--line);border-radius:9px;padding:8px 10px;outline:0;resize:vertical}
+.form input:focus,.form textarea:focus{border-color:var(--sand2)}
+.list .item{background:var(--deep);border:1px solid var(--line);border-radius:9px;padding:8px 30px 8px 10px;margin-bottom:6px;font-size:13.5px;line-height:1.55;position:relative}
+.list .item .meta{font-size:11px;color:var(--muted)}
+.list .del{position:absolute;right:6px;top:4px;background:transparent;border:0;color:var(--muted);cursor:pointer;font-size:16px}
+.list .del:hover{color:var(--rose)}
+.srctbl{width:100%;border-collapse:collapse;font-size:13px}
+.srctbl td{padding:6px 4px;border-bottom:1px dashed var(--line)}
+.srctbl td:nth-child(n+2){text-align:right;font-family:var(--mono);font-size:12px;color:var(--muted)}
+.qa b{color:var(--teal);font-weight:500}
+
+/* timeline */
+.tl{position:relative;padding-left:18px}
+.tl::before{content:"";position:absolute;left:5px;top:4px;bottom:4px;width:2px;background:var(--line)}
+.ev{position:relative;margin-bottom:14px;font-size:14px}
+.ev::before{content:"";position:absolute;left:-17px;top:5px;width:10px;height:10px;border-radius:50%;background:var(--panel2);border:2px solid var(--sand2)}
+.ev.level::before,.ev.skill::before{background:var(--sand)}
+.ev.birth::before{background:var(--teal);border-color:var(--teal)}
+.ev .meta{font-size:11.5px;color:var(--muted)}
+
+/* modal */
+.modal{position:fixed;inset:0;background:rgba(8,6,4,.72);display:flex;align-items:center;justify-content:center;z-index:50;padding:16px}
+.mbox{background:var(--panel);border:1px solid var(--line);border-radius:14px;width:min(640px,100%);max-height:92vh;overflow-y:auto;padding:20px}
+.mbox h2{margin:0 0 14px;font-size:18px;color:var(--sand)}
+.mbox label{display:block;font-size:13px;color:var(--muted);margin-bottom:11px}
+.mbox input,.mbox select{display:block;width:100%;margin-top:5px;background:var(--bg);border:1px solid var(--line);border-radius:9px;padding:8px 10px;outline:0}
+.mbox input:focus,.mbox select:focus{border-color:var(--sand2)}
+.mbox select option{background:var(--panel)}
+.mono{font-family:var(--mono)!important;font-size:14px!important}
+.two{display:grid;grid-template-columns:2fr 1fr;gap:10px}
+.three{display:grid;grid-template-columns:2fr 1fr 1fr;gap:10px}
+.vars{display:flex;flex-wrap:wrap;gap:5px;align-items:center;font-size:12px;color:var(--muted);margin:-4px 0 10px}
+.vars button{background:var(--panel2);border:1px solid var(--line);border-radius:6px;padding:2px 7px;cursor:pointer;font-family:var(--mono);font-size:12px;color:var(--teal)}
+.vars.funcs button{color:var(--sand)}
+.fprev{background:var(--deep);border:1px solid var(--line);border-radius:10px;padding:4px 0;margin:-2px 0 12px;min-height:46px}
+.fprev .math{margin:0;background:transparent}
+.fprev .perr{color:var(--rose);font-size:13px;padding:10px 12px}
+.mfoot{display:flex;justify-content:flex-end;gap:8px;margin-top:6px}
+.merr{color:var(--rose);font-size:13px;margin-right:auto;align-self:center}
+#pCanvas{width:100%;height:300px;display:block;background:var(--deep);border-radius:10px;margin-bottom:8px}
+
+@media (max-width:980px){
+  header{height:auto;flex-wrap:wrap}
+  main{grid-template-columns:1fr;height:auto}
+  .chat{border-right:0;border-bottom:1px solid var(--line);height:65vh}
+  aside{min-height:80vh}
+}
+</style>
+</head>
+<body>
+<header>
+  <canvas id="orb" width="112" height="112"></canvas>
+  <div class="id">
+    <div class="name">แซนด์ <span id="lv">Lv.1</span></div>
+    <div class="bar"><i id="xpbar"></i></div>
+    <div class="sub" id="xptext">กำลังตื่น…</div>
+  </div>
+  <div class="spacer"></div>
+  <div class="trainpill" id="trainpill">
+    <span class="dot"></span><span id="trainText">…</span>
+    <button class="btn sm" id="trainBtn">▶ ฝึก</button>
+  </div>
+</header>
+
+<main>
+  <section class="chat">
+    <div id="msgs"></div>
+    <form id="f">
+      <textarea id="in" rows="1" placeholder="คุยกับแซนด์… (Enter ส่ง)"></textarea>
+      <button id="send">ส่ง</button>
+    </form>
+  </section>
+
+  <aside>
+    <nav>
+      <button data-tab="live" class="on">🧠 สมองสด</button>
+      <button data-tab="train">📈 การฝึก</button>
+      <button data-tab="form">📐 สูตร</button>
+      <button data-tab="data">📚 ข้อมูลฝึก</button>
+      <button data-tab="tl">🕒 เวลา</button>
+    </nav>
+
+    <!-- ===== LIVE BRAIN ===== -->
+    <div id="live" class="tab on">
+      <div class="ctl">
+        <label>อุณหภูมิ T <b id="vT"></b><input type="range" id="sT" min="0.05" max="2" step="0.05"></label>
+        <label>top-k <b id="vK"></b><input type="range" id="sK" min="1" max="60" step="1"></label>
+        <label>ช้าลง (มิลลิวิ) <b id="vD"></b><input type="range" id="sD" min="0" max="600" step="10"></label>
+      </div>
+      <div class="status" id="liveStatus">ส่งข้อความหาแซนด์ แล้วดูมันคิดทีละตัวอักษรตรงนี้ หรือกด 🔬 ใต้คำตอบเก่าเพื่อย้อนดู</div>
+
+      <div class="card">
+        <h4>ประโยคที่กำลังเกิด <small>คลิกตัวอักษรเพื่อดูว่าคิดยังไง</small></h4>
+        <div class="stream" id="stream"><span class="stop">—</span></div>
+        <div class="legend">ไม่มั่นใจ<span class="grad"></span>มั่นใจ</div>
+      </div>
+
+      <div id="inspect" class="hidden">
+        <div class="card">
+          <h4>① มองย้อนกลับ (attention) <small id="attNote"></small></h4>
+          <div class="ctxview" id="ctxview"></div>
+          <div class="math" id="attMath"></div>
+          <div class="math sub" id="attMath2"></div>
+          <div class="say" id="attSay"></div>
+        </div>
+        <div class="card">
+          <h4>② สัญญาณวิ่งผ่านสมอง <small id="layerNote"></small></h4>
+          <div class="layers" id="layers"></div>
+          <div class="math" style="margin-top:24px">
+            <span class="mvar">x</span><span class="mo">←</span><span class="mvar">x</span><span class="mo">+</span><span class="mf">Attention</span><span class="mp">(</span><span class="mf">LN</span><span class="mp">(</span><span class="mvar">x</span><span class="mp">))</span><span class="mo">+</span><span class="mf">GELU</span><span class="mp">(</span><span class="mf">LN</span><span class="mp">(</span><span class="mvar">x</span><span class="mp">)</span><span class="mvar">W</span><sub>1</sub><span class="mp">)</span><span class="mvar">W</span><sub>2</sub>
+          </div>
+          <div class="say">แต่ละแท่งคือความแรงของสัญญาณ ‖x‖ หลังผ่านแต่ละชั้น ทุกชั้นเพิ่ม “ความเข้าใจ” ลงไปในเวกเตอร์เดิม</div>
+        </div>
+        <div class="card">
+          <h4>③ เลือกตัวอักษรถัดไป (softmax) <small id="smNote"></small></h4>
+          <div class="bars" id="bars"></div>
+          <div class="math" id="smMath"></div>
+          <div class="math sub" id="smMath2"></div>
+          <div class="say" id="smSay"></div>
+        </div>
+        <div class="card">
+          <h4>④ ความลังเล (entropy)</h4>
+          <div class="math" id="hMath"></div>
+          <div class="say" id="hSay"></div>
+        </div>
+      </div>
+
+      <div class="card hidden" id="sumCard">
+        <h4>สรุปคำตอบนี้</h4>
+        <canvas class="chart" id="tokChart"></canvas>
+        <div class="legend" style="gap:14px"><span style="color:var(--sand)">━ ความน่าจะเป็นของตัวที่เลือก</span><span style="color:var(--teal)">━ ความลังเล (บิต)</span></div>
+        <div class="math" id="pplMath"></div>
+        <div class="say" id="sumSay"></div>
+      </div>
+    </div>
+
+    <!-- ===== TRAINING ===== -->
+    <div id="train" class="tab">
+      <div class="stats" id="tStats"></div>
+      <div class="err" id="tErr"></div>
+      <h3>loss ระหว่างฝึก (ยิ่งต่ำยิ่งเก่ง)</h3>
+      <canvas class="chart" id="lossChart" style="height:170px"></canvas>
+      <div class="legend" style="gap:14px"><span style="color:var(--sand)">━ ตอนฝึก</span><span style="color:var(--teal)">━ ข้อความที่ไม่เคยเห็น</span><span style="color:var(--rose)">┅ เดาสุ่ม</span></div>
+
+      <h3>สูตรที่กำลังทำงานตอนนี้</h3>
+      <div class="card">
+        <h4>loss: เดาผิดแค่ไหน</h4>
+        <div class="math" id="lossMath"></div>
+        <div class="math sub" id="lossMath2"></div>
+        <div class="say" id="lossSay"></div>
+      </div>
+      <div class="card">
+        <h4>ปรับน้ำหนักสมอง (AdamW) <small>ทำทุกก้าว</small></h4>
+        <div class="math" id="adamMath"></div>
+        <div class="math sub" id="adamMath2"></div>
+        <div class="say" id="adamSay"></div>
+      </div>
+      <div class="card">
+        <h4>ขนาดสมอง</h4>
+        <div class="math" id="sizeMath"></div>
+        <div class="math sub" id="sizeMath2"></div>
+        <div class="say" id="sizeSay"></div>
+      </div>
+
+      <h3>แซนด์ลองพูด (ทุก 300 ก้าว)</h3>
+      <div class="samples" id="samples"></div>
+
+      <h3>เริ่มสมองใหม่</h3>
+      <div class="card">
+        <div class="sizes" id="sizes"></div>
+        <div class="say">สมองใหญ่ขึ้น = เรียนได้ลึกขึ้นแต่ฝึกช้าลง การเริ่มใหม่จะลบสิ่งที่สมองเรียนมาทั้งหมด (สิ่งที่สอนและข้อความที่ป้อนยังอยู่)</div>
+        <div class="abtn"><button class="btn danger" id="resetBtn">เริ่มสมองใหม่</button></div>
+      </div>
+    </div>
+
+    <!-- ===== FORMULAS ===== -->
+    <div id="form" class="tab">
+      <p class="intro">ตัวเลขการเติบโตของแซนด์คำนวณจากสูตรเหล่านี้ และสูตรที่ติดป้าย <span class="tag">ใช้ตอนฝึก</span> คือสูตรที่ครูฝึกใช้จริงทุกก้าว แก้แล้วการเรียนรู้เปลี่ยนทันที สูตรด้านล่างใช้ผลของสูตรด้านบนได้</p>
+      <div class="headrow" style="margin-top:0"><h3>สูตรทั้งหมด</h3><button class="btn sm primary" id="addFormula">+ สร้างสูตร</button></div>
+      <div id="fList"></div>
+      <details class="ref"><summary>📖 ตัวแปรและฟังก์ชันที่ใช้ได้</summary><div id="fRef"></div></details>
+    </div>
+
+    <!-- ===== DATA ===== -->
+    <div id="data" class="tab">
+      <h3>แซนด์เรียนจากอะไรบ้าง</h3>
+      <div class="card"><table class="srctbl" id="srcTbl"></table>
+        <div class="say">น้ำหนัก = อ่านซ้ำกี่เท่า แก้ได้ที่แท็บสูตร · ข้อมูลใหม่ถูกใช้ทันทีในก้าวฝึกถัดไป</div></div>
+
+      <h3>สอนแซนด์ (ถาม → ตอบ)</h3>
+      <div class="card form">
+        <input id="tq" placeholder="ถ้ามีคนถามว่า… เช่น ใครเป็นเจ้าของแซนด์">
+        <input id="ta" placeholder="ให้แซนด์ตอบว่า… เช่น ฟลุ๊คเป็นเจ้าของผมครับ">
+        <div class="abtn"><button class="btn primary" id="teachBtn">สอน</button><span class="err" id="teachErr"></span></div>
+      </div>
+      <div class="list" id="taughtList"></div>
+
+      <h3>ป้อนข้อความให้อ่าน</h3>
+      <div class="card form">
+        <input id="xt" placeholder="ชื่อ (ไม่ใส่ก็ได้)">
+        <textarea id="xc" rows="5" placeholder="วางข้อความภาษาไทยยาวๆ ตรงนี้ เช่น บทความ เรื่องสั้น บันทึกของคุณ ยิ่งเยอะแซนด์ยิ่งรู้จักภาษา"></textarea>
+        <div class="abtn"><button class="btn primary" id="textBtn">ป้อนให้อ่าน</button>
+          <label class="btn">📄 เปิดไฟล์ .txt<input type="file" id="xfile" accept=".txt,.md,.csv" multiple hidden></label>
+          <span class="err" id="textErr"></span></div>
+      </div>
+      <div class="list" id="textList"></div>
+      <details class="ref"><summary>ดูตัวอย่างบทเรียนตั้งต้น</summary><pre id="seedPrev" style="white-space:pre-wrap;font-size:12.5px;color:var(--muted)"></pre></details>
+    </div>
+
+    <!-- ===== TIMELINE ===== -->
+    <div id="tl" class="tab"><div class="tl" id="tlList"></div></div>
+  </aside>
+</main>
+
+<div id="fmodal" class="modal hidden"><div class="mbox">
+  <h2 id="fTitle">สร้างสูตร</h2>
+  <label id="fPresetWrap">เริ่มจากแม่แบบ<select id="fPreset"></select></label>
+  <div class="two">
+    <label>ชื่อสูตร<input id="fName" maxlength="60"></label>
+    <label>ชื่อตัวแปร (อังกฤษ)<input id="fKey" class="mono" maxlength="24"></label>
+  </div>
+  <label>สูตร<input id="fExpr" class="mono" autocomplete="off" spellcheck="false" placeholder="เช่น exp(-val_loss) * 100"></label>
+  <div class="vars" id="fVarChips"></div>
+  <div class="vars funcs" id="fFuncChips"></div>
+  <div class="fprev" id="fPrev"></div>
+  <div class="two" id="fMetaWrap">
+    <label>คำอธิบาย<input id="fDesc" maxlength="200"></label>
+    <label>หน่วย<input id="fUnit" maxlength="12"></label>
+  </div>
+  <div class="mfoot"><span class="merr" id="fErr"></span><button class="btn" id="fCancel">ยกเลิก</button><button class="btn primary" id="fSave">บันทึก</button></div>
+</div></div>
+
+<div id="pmodal" class="modal hidden"><div class="mbox" style="width:min(740px,100%)">
+  <h2 id="pTitle">กราฟของสูตร</h2>
+  <div class="math" id="pMath"></div>
+  <div class="three" style="margin-top:12px">
+    <label>แกนนอน<select id="pVar"></select></label>
+    <label>จาก<input id="pLo" type="number"></label>
+    <label>ถึง<input id="pHi" type="number"></label>
+  </div>
+  <canvas id="pCanvas"></canvas>
+  <div class="muted" id="pNote"></div>
+  <div class="mfoot"><button class="btn" id="pClose">ปิด</button></div>
+</div></div>
+
+<script>
+const $ = s => document.querySelector(s);
+const $$ = s => document.querySelectorAll(s);
+let S = null, busy = false, pollTimer = null, settingsTimer = null;
+const esc = s => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const when = ts => new Date(ts*1000).toLocaleString('th-TH',{dateStyle:'medium',timeStyle:'short'});
+const post = (u,b) => fetch(u,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b||{})});
+const FONT = () => getComputedStyle(document.body).fontFamily;
+function fmtNum(x, dig=2){
+  if(x == null || isNaN(x)) return '?';
+  if(!isFinite(x)) return '∞';
+  if(Math.abs(x) >= 1e6){ const [m, e] = x.toExponential(2).split('e+');
+    return m + '×10' + [...e].map(d => '⁰¹²³⁴⁵⁶⁷⁸⁹'[d]).join(''); }
+  if(Math.abs(x - Math.round(x)) < 1e-9) return Math.round(x).toLocaleString('en-US');
+  if(Math.abs(x) < 0.01) return x.toPrecision(3);
+  return x.toLocaleString('en-US', {maximumFractionDigits: dig});
+}
+const pct = p => (p*100 >= 10 ? (p*100).toFixed(1) : (p*100).toPrecision(2)) + '%';
+
+/* ---------- math building blocks ---------- */
+const MV = s => `<span class="mvar">${s}</span>`;
+const MN = n => `<span class="mn">${n}</span>`;
+const OP = s => `<span class="mo">${s}</span>`;
+const PA = s => `<span class="mp">(</span>${s}<span class="mp">)</span>`;
+const FR = (a,b) => `<span class="frac"><span>${a}</span><span>${b}</span></span>`;
+const SUP = (b,e) => `${b}<sup>${e}</sup>`;
+const SUB = (b,s) => `${b}<sub>${s}</sub>`;
+const SQRT = a => `<span class="sqrt"><svg class="rad" viewBox="0 0 10 24" preserveAspectRatio="none"><path d="M0.5 14 L3 12.5 L6 23 L9.6 0.6" vector-effect="non-scaling-stroke"/></svg><span class="under">${a}</span></span>`;
+const SIG = s => `<span class="bigop">Σ<sub>${s}</sub></span>`;
+const EQ = v => `${OP('=')}<span class="eq">${v}</span>`;
+const showCh = c => c === ' ' ? '␣' : c === '\n' ? '↵' : c;
+const CH = c => `<span class="mch">“${esc(showCh(c))}”</span>`;
+const heat = (p, a=.75) => {
+  const r = p < .5 ? [224,122,106] : [123,216,143], m = [232,184,107];
+  const t = p < .5 ? 1 - p*2 : (p - .5) * 2;
+  const c = m.map((v,i) => Math.round(v + (r[i]-v)*t));
+  return `rgba(${c[0]},${c[1]},${c[2]},${a})`;
+};
+
+/* ---------- chat ---------- */
+function addMsg(m){
+  $('.empty')?.remove();
+  const row = document.createElement('div');
+  row.className = 'msg ' + m.role;
+  const wrap = document.createElement('div'); wrap.className = 'mwrap';
+  const b = document.createElement('div'); b.className = 'bubble';
+  b.textContent = m.content || '';
+  wrap.appendChild(b);
+  if(m.role === 'assistant'){
+    const av = document.createElement('div'); av.className = 'avatar'; row.appendChild(av);
+    const acts = document.createElement('div'); acts.className = 'acts';
+    wrap.appendChild(acts);
+    row.acts = acts;
+    if(m.id) setActs(row, m);
+  }
+  row.appendChild(wrap);
+  row.body = b;
+  $('#msgs').appendChild(row);
+  $('#msgs').scrollTop = 1e9;
+  return row;
+}
+function setActs(row, m){
+  const a = row.acts;
+  a.innerHTML = `<button data-v="1" title="ตอบดี แซนด์จะอ่านคำตอบนี้ซ้ำตอนฝึก">👍</button><button data-v="-1">👎</button>`
+    + `<button data-fix title="สอนคำตอบที่ถูก">✏️ สอนคำตอบที่ถูก</button>`
+    + (m.has_trace ? `<button data-trace title="ย้อนดูว่าแซนด์คิดยังไง">🔬 ดูสมอง</button>` : '');
+  const paint = r => a.querySelectorAll('[data-v]').forEach(x => x.classList.toggle('on', +x.dataset.v === r));
+  paint(m.rating || 0);
+  a.querySelectorAll('[data-v]').forEach(btn => btn.onclick = async () => {
+    const r = await (await post('/api/rate', {id:m.id, value:+btn.dataset.v})).json(); paint(r.rating); loadState();
+  });
+  a.querySelector('[data-fix]').onclick = () => {
+    if(row.querySelector('.fix')) return;
+    const f = document.createElement('div'); f.className = 'fix';
+    f.innerHTML = `<input placeholder="คำตอบที่ถูกควรเป็น…"><button class="btn sm primary">สอน</button>`;
+    a.after(f);
+    const inp = f.querySelector('input'); inp.focus();
+    const go = async () => {
+      if(!inp.value.trim()) return;
+      const r = await (await post('/api/correct', {id:m.id, text:inp.value})).json();
+      f.innerHTML = r.ok ? '<span class="muted">✓ สอนแล้ว แซนด์จะเรียนคำตอบนี้ในรอบฝึกถัดไป</span>' : `<span class="err">${esc(r.error)}</span>`;
+      loadState();
+    };
+    f.querySelector('button').onclick = go;
+    inp.onkeydown = e => { if(e.key === 'Enter' && !e.isComposing) go(); };
+  };
+  const tr = a.querySelector('[data-trace]');
+  if(tr) tr.onclick = async () => {
+    const d = await (await fetch('/api/trace?id=' + m.id)).json();
+    if(d.error) return;
+    switchTab('live');
+    live.tokens = d.tokens; live.info = d.info; live.sel = 0; live.summary = d.summary;
+    $('#liveStatus').innerHTML = `ย้อนดูคำตอบเก่า · สมองตอนนั้นฝึกมา <b>${fmtNum(d.info.step)}</b> ก้าว · T = ${d.info.T} · top-k = ${d.info.top_k}`;
+    renderStream(); inspectTok(0); renderSummary();
+  };
+}
+
+async function send(){
+  const input = $('#in'), text = input.value.trim();
+  if(!text || busy) return;
+  busy = true; $('#send').disabled = true; orbThinking = true;
+  addMsg({role:'user', content:text}); input.value = '';
+  const row = addMsg({role:'assistant', content:''}); row.classList.add('thinking');
+  switchTab('live');
+  live.tokens = []; live.sel = null; live.summary = null; live.follow = true;
+  $('#sumCard').classList.add('hidden');
+  renderStream();
+  let full = '', t0 = performance.now(), gotEnd = false;
+  try{
+    const res = await post('/api/chat', {message:text});
+    const reader = res.body.getReader(), dec = new TextDecoder();
+    let buf = '';
+    while(true){
+      const {done, value} = await reader.read();
+      if(done) break;
+      buf += dec.decode(value, {stream:true});
+      const lines = buf.split('\n'); buf = lines.pop();
+      for(const l of lines){
+        if(!l.trim()) continue;
+        const d = JSON.parse(l);
+        if(d.start){
+          live.info = d.start;
+          $('#liveStatus').innerHTML = `สมองขนาด${d.start.size_label} · ${d.start.layers} ชั้น · ${d.start.heads} หัว attention · ฝึกมา <b>${fmtNum(d.start.step)}</b> ก้าว · อ่านบริบท ${d.start.prompt_chars} ตัวอักษร`;
+        }
+        if(d.tok){
+          live.tokens.push(d.tok);
+          if(!d.tok.stop){ full += d.tok.ch; row.body.textContent = full; $('#msgs').scrollTop = 1e9; }
+          appendStreamTok(live.tokens.length - 1);
+          if(live.follow) inspectTok(live.tokens.length - 1);
+          const secs = (performance.now() - t0) / 1000;
+          $('#liveStatus').innerHTML = `กำลังคิดตัวอักษรที่ <b>${live.tokens.length}</b> · ${fmtNum(live.tokens.length / secs, 1)} ตัว/วินาที`;
+        }
+        if(d.error){
+          gotEnd = true;
+          row.body.innerHTML = `<span class="err">แซนด์ตอบไม่ได้: ${esc(d.error)}</span>`;
+          $('#liveStatus').innerHTML = `<span class="err">เกิดข้อผิดพลาด: ${esc(d.error)} (รายละเอียดอยู่ในหน้าต่าง Terminal)</span>`;
+        }
+        if(d.done){
+          gotEnd = true;
+          row.classList.remove('thinking');
+          if(!full) row.body.textContent = '…';
+          setActs(row, {id:d.id, rating:0, has_trace:true});
+          live.summary = d.summary; renderSummary();
+          $('#liveStatus').innerHTML = `คิดเสร็จ ${d.summary.chars} ตัวอักษรใน ${d.summary.secs} วินาที · คลิกตัวอักษรเพื่อดูการคิดของแต่ละตัว`;
+        }
+      }
+    }
+    if(!gotEnd) row.body.innerHTML = '<span class="err">การเชื่อมต่อหลุดก่อนแซนด์ตอบเสร็จ ดูข้อความในหน้าต่าง Terminal</span>';
+  }catch(e){
+    row.body.innerHTML = `<span class="err">ติดต่อแซนด์ไม่ได้: ${esc(e.message)} — หน้าต่าง Terminal ที่รันแซนด์ยังเปิดอยู่ไหม?</span>`;
+  }
+  row.classList.remove('thinking');
+  busy = false; $('#send').disabled = false; orbThinking = false;
+  loadState();
+}
+$('#in').addEventListener('keydown', e => { if(e.key === 'Enter' && !e.shiftKey && !e.isComposing){ e.preventDefault(); send(); } });
+$('#f').addEventListener('submit', e => { e.preventDefault(); send(); });
+
+/* ---------- live brain ---------- */
+const live = {tokens: [], sel: null, info: null, summary: null, follow: true};
+function tokSpan(t, i){
+  if(t.stop) return `<span class="stop" data-i="${i}" title="แซนด์ตัดสินใจจบประโยค (ขึ้นบรรทัดใหม่) p = ${pct(t.p)}">↵ จบ</span>`;
+  const alt = t.top.slice(0,3).map(([c,p]) => `“${showCh(c)}” ${pct(p)}`).join('  ');
+  return `<span data-i="${i}" style="background:${heat(t.p,.55)}" title="p = ${pct(t.p)}\nตัวเลือก: ${esc(alt)}">${esc(t.ch === ' ' ? ' ' : t.ch)}</span>`;
+}
+function renderStream(){
+  $('#stream').innerHTML = live.tokens.length ? live.tokens.map(tokSpan).join('') : '<span class="stop">รอข้อความ…</span>';
+  bindStream();
+}
+function appendStreamTok(i){
+  if(i === 0) $('#stream').innerHTML = '';
+  $('#stream').insertAdjacentHTML('beforeend', tokSpan(live.tokens[i], i));
+  bindStream();
+}
+function bindStream(){
+  $$('#stream [data-i]').forEach(s => s.onclick = () => { live.follow = false; inspectTok(+s.dataset.i); });
+}
+function inspectTok(i){
+  const t = live.tokens[i]; if(!t) return;
+  live.sel = i;
+  $$('#stream [data-i]').forEach(s => s.classList.toggle('sel', +s.dataset.i === i));
+  $('#inspect').classList.remove('hidden');
+  const prev = live.tokens.slice(0, i).filter(x => !x.stop).map(x => x.ch).join('');
+  const target = t.stop ? 'การจบประโยค' : `ตัวอักษร ${CH(t.ch)}`;
+
+  // ① attention
+  const n = t.ctx.length, mx = Math.max(...t.att, 1e-9);
+  $('#ctxview').innerHTML = [...t.ctx].map((c, j) => {
+    const w = t.att[j] / mx;
+    const inner = c === '\n' ? '<span class="nl">↵</span><br>' : esc(c === ' ' ? ' ' : c);
+    return `<span style="background:rgba(108,195,181,${(w*.85).toFixed(3)})" title="น้ำหนัก ${(t.att[j]*100).toFixed(1)}%">${inner}</span>`;
+  }).join('');
+  const af = t.att_focus, s = af.dot / Math.sqrt(af.dk);
+  $('#attNote').textContent = `ชั้นสุดท้าย · ${t.att.length} ตัวล่าสุด`;
+  $('#attMath').innerHTML = `${SUB(MV('a'),'j')}${OP('=')}${FR(SUP(MN('e'), SUB(MV('s'),'j')), SIG('i') + SUP(MN('e'), SUB(MV('s'),'i')))}${OP(',')}&nbsp;${SUB(MV('s'),'j')}${OP('=')}${FR(MV('q') + OP('·') + SUB(MV('k'),'j'), SQRT(SUB(MV('d'),'k')))}`;
+  $('#attMath2').innerHTML = `${SUB(MV('a'), CH(af.ch))}${OP('=')}${FR(SUP(MN('e'), FR(MN(fmtNum(af.dot)), SQRT(MN(af.dk)))), MN(fmtNum(af.sum)))}${OP('=')}${FR(SUP(MN('e'), MN(fmtNum(s))), MN(fmtNum(af.sum)))}${EQ(pct(af.w))}`;
+  $('#attSay').innerHTML = `ก่อนจะเลือก${target} หัว attention ที่ ${af.head + 1} มองย้อนไปที่ ${CH(af.ch)} (ย้อนหลัง ${af.back} ตัว) มากที่สุด ให้น้ำหนัก <b>${pct(af.w)}</b> · สีเขียวในข้อความด้านบนคือที่แซนด์ “มอง” (เฉลี่ยทุกหัว)`;
+
+  // ② layers
+  const nm = Math.max(...t.norms);
+  $('#layers').innerHTML = t.norms.map((v, j) => `<div style="height:${Math.max(4, v/nm*58)}px"><em>${fmtNum(v,1)}</em><span>ชั้น ${j+1}</span></div>`).join('');
+  $('#layerNote').textContent = `${t.norms.length} ชั้น`;
+
+  // ③ softmax
+  const top = t.top, tm = top[0][1];
+  $('#smNote').textContent = `จาก ${t.vocab} ตัวอักษรที่รู้จัก · T = ${t.T}`;
+  const inTop = top.some(([c]) => c === t.ch);
+  $('#bars').innerHTML = top.map(([c, p, z]) => `<div class="row ${c === t.ch ? 'pick' : ''}"><span class="c">${esc(showCh(c))}</span>
+      <span class="t"><i style="width:${p/tm*100}%"></i></span><span class="n">z=${z.toFixed(2)} · ${pct(p)}</span></div>`).join('')
+    + (inTop ? '' : `<div class="row pick"><span class="c">${esc(showCh(t.ch))}</span><span class="t"><i style="width:${t.p/tm*100}%"></i></span><span class="n">z=${t.z.toFixed(2)} · ${pct(t.p)}</span></div>`);
+  const ez = Math.exp(t.z / t.T);
+  $('#smMath').innerHTML = `${MV('p')}${PA(MV('c'))}${OP('=')}${FR(SUP(MN('e'), FR(SUB(MV('z'),'c'), MV('T'))), SIG('j') + SUP(MN('e'), FR(SUB(MV('z'),'j'), MV('T'))))}`;
+  $('#smMath2').innerHTML = `${MV('p')}${PA(CH(t.ch))}${OP('=')}${FR(SUP(MN('e'), FR(MN(t.z.toFixed(2)), MN(t.T))), MN(fmtNum(t.sum_exp)))}${OP('=')}${FR(MN(fmtNum(ez)), MN(fmtNum(t.sum_exp)))}${EQ(pct(t.p))}`;
+  $('#smSay').innerHTML = `แต่ละตัวอักษรได้คะแนนดิบ z (logit) จากสมอง แล้ว softmax แปลงเป็นความน่าจะเป็นที่รวมกันได้ 100% · `
+    + `อุณหภูมิ T ${t.T < 0.6 ? 'ต่ำ ทำให้เลือกตัวที่ชัวร์ที่สุดเกือบเสมอ' : t.T > 1.1 ? 'สูง ทำให้กล้าเลือกตัวแปลกๆ มากขึ้น' : 'กลางๆ'} · `
+    + `สุ่มจาก ${t.T ? 'top-k ตัวที่น่าจะเป็นที่สุด' : ''} แล้วได้${target}${t.stop ? ' (แซนด์คิดว่าพูดจบแล้ว)' : ''}`;
+
+  // ④ entropy
+  const hp = top.slice(0,3).map(([c,p]) => `${MN(fmtNum(p,3))}${OP('·')}${SUB('log','2')}${MN(fmtNum(p,3))}`).join(OP('+'));
+  $('#hMath').innerHTML = `${MV('H')}${OP('=')}−${SIG('i')}${SUB(MV('p'),'i')}${SUB('log','2')}${SUB(MV('p'),'i')}${OP('=')}−${PA(hp + OP('+') + '…')}${EQ(fmtNum(t.H,3) + ' บิต')}`;
+  const choices = Math.pow(2, t.H);
+  $('#hSay').innerHTML = `ลังเลเท่ากับการเลือกระหว่างประมาณ <b>${fmtNum(choices,1)}</b> ตัวอักษร (2<sup>H</sup>) · ${t.H < 0.3 ? 'มั่นใจมาก' : t.H < 1.5 ? 'มั่นใจพอสมควร' : t.H < 3 ? 'ยังลังเล' : 'ลังเลมาก แทบเดาสุ่ม'} · ถ้าเดาสุ่มจาก ${t.vocab} ตัว H จะเท่ากับ ${fmtNum(Math.log2(t.vocab),2)} บิต`;
+}
+function renderSummary(){
+  const sm = live.summary; if(!sm || !live.tokens.length) return;
+  $('#sumCard').classList.remove('hidden');
+  const T = live.tokens, N = T.length;
+  $('#pplMath').innerHTML = `${MV('PPL')}${OP('=')}${SUP(MN('e'), '−' + FR(MN(1), MV('N')) + SIG('i') + 'ln' + SUB(MV('p'),'i'))}${OP('=')}${SUP(MN('e'), '−' + FR(MN(1), MN(N)) + OP('×') + MN(fmtNum(N * Math.log(sm.ppl),2)))}${EQ(fmtNum(sm.ppl,2))}`;
+  $('#sumSay').innerHTML = `ทั้งคำตอบ แซนด์ลังเลเฉลี่ยราว <b>${fmtNum(sm.ppl,2)}</b> ตัวเลือกต่อตัวอักษร (1 = มั่นใจทุกตัว) · ความน่าจะเป็นเฉลี่ย ${pct(sm.avg_p)} · ใช้เวลา ${sm.secs} วินาที`;
+  const c = $('#tokChart'), w = c.clientWidth, h = 150, dpr = devicePixelRatio || 1;
+  if(!w) return;
+  c.width = w*dpr; c.height = h*dpr;
+  const g = c.getContext('2d'); g.scale(dpr,dpr);
+  const X = i => 8 + (N > 1 ? i/(N-1) : .5)*(w-16);
+  const Hm = Math.max(1, ...T.map(t => t.H));
+  g.strokeStyle = '#2e251d'; for(let i=1;i<4;i++){ g.beginPath(); g.moveTo(0,i*h/4); g.lineTo(w,i*h/4); g.stroke(); }
+  const line = (f, col) => { g.beginPath(); T.forEach((t,i) => { const y = h-8-f(t)*(h-16); i ? g.lineTo(X(i),y) : g.moveTo(X(i),y); }); g.strokeStyle = col; g.lineWidth = 2; g.stroke(); };
+  line(t => t.H / Hm, '#6cc3b5'); line(t => t.p, '#e8b86b');
+}
+
+/* ---------- live settings ---------- */
+function bindSlider(id, key, fmt){
+  const s = $('#s'+id);
+  s.oninput = () => { $('#v'+id).textContent = fmt(+s.value); clearTimeout(settingsTimer);
+    settingsTimer = setTimeout(() => post('/api/settings', {[key]: +s.value}), 250); };
+}
+bindSlider('T', 'temperature', v => v.toFixed(2));
+bindSlider('K', 'top_k', v => v);
+bindSlider('D', 'delay', v => v);
+
+/* ---------- tabs ---------- */
+function switchTab(t){
+  $$('nav button').forEach(x => x.classList.toggle('on', x.dataset.tab === t));
+  $$('.tab').forEach(x => x.classList.toggle('on', x.id === t));
+  if(t === 'train') drawLoss();
+  if(t === 'form') drawSparks();
+  if(t === 'live') renderSummary();
+}
+$$('nav button').forEach(b => b.onclick = () => switchTab(b.dataset.tab));
+
+/* ---------- state ---------- */
+async function loadState(){
+  try{ S = await (await fetch('/api/state')).json(); }catch{ return; }
+  render();
+  clearTimeout(pollTimer);
+  pollTimer = setTimeout(loadState, S.train.running ? 2000 : 6000);
+}
+
+function render(){
+  $('#lv').textContent = 'Lv.' + S.level;
+  if(S.xp_next == null){ $('#xpbar').style.width = '100%'; $('#xptext').textContent = `${fmtNum(S.xp)} XP · เลเวลสูงสุดตามสูตร`; }
+  else{
+    const span = Math.max(1, S.xp_next - S.xp_cur);
+    $('#xpbar').style.width = Math.max(0, Math.min(100, (S.xp - S.xp_cur)/span*100)) + '%';
+    $('#xptext').textContent = `${fmtNum(S.xp)} XP · อีก ${fmtNum(Math.max(0, S.xp_next - S.xp))} XP ถึงเลเวล ${S.level+1}`;
+  }
+  orbTarget = Math.max(5, Math.min(480, Math.round(S.grains)));
+  const T = S.train;
+  $('#trainpill').classList.toggle('on', T.running);
+  $('#trainText').innerHTML = T.running
+    ? `กำลังฝึก · ก้าว <b>${fmtNum(T.step)}</b> · loss <b>${T.loss != null ? T.loss.toFixed(3) : '–'}</b> · ${fmtNum(T.speed,1)} ก้าว/วิ`
+    : `หยุดฝึก · ฝึกแล้ว <b>${fmtNum(T.step)}</b> ก้าว`;
+  $('#trainBtn').textContent = T.running ? '⏸ หยุด' : '▶ ฝึก';
+  const st = S.settings;
+  if(document.activeElement?.type !== 'range'){
+    $('#sT').value = st.temperature; $('#vT').textContent = st.temperature.toFixed(2);
+    $('#sK').value = st.top_k; $('#vK').textContent = st.top_k;
+    $('#sD').value = st.delay; $('#vD').textContent = st.delay;
+  }
+  renderTrain(); renderFormulas(); renderData();
+  $('#tlList').innerHTML = S.events.map(e => `<div class="ev ${e.kind}"><div>${esc(e.title)}</div><div class="meta">${when(e.ts)}</div></div>`).join('');
+}
+
+/* ---------- training tab ---------- */
+function renderTrain(){
+  const T = S.train, rl = T.random_loss;
+  const dev = {mps:'GPU Mac', cuda:'NVIDIA', cpu:'CPU'}[T.device] || T.device;
+  $('#tStats').innerHTML = [
+    ['ก้าวที่ฝึก', fmtNum(T.step)], ['loss ตอนฝึก', T.loss != null ? T.loss.toFixed(3) : '–'],
+    ['loss ข้อความใหม่', T.val_loss != null ? T.val_loss.toFixed(3) : '–'],
+    ['เก่งกว่าเดาสุ่ม', fmtNum(S.skill,1) + '%'], ['อ่านไปแล้ว', fmtNum(T.tokens/1e6,2) + ' ล้านตัว'],
+    ['ความเร็ว', T.running ? fmtNum(T.speed,1) + ' ก้าว/วิ' : dev],
+  ].map(([k,v]) => `<div class="stat"><div class="v">${v}</div><div class="k">${k}</div></div>`).join('');
+  $('#tErr').textContent = T.error ? 'การฝึกหยุดเพราะผิดพลาด: ' + T.error : '';
+
+  const L = T.loss ?? rl, V = T.vocab;
+  $('#lossMath').innerHTML = `${MV('L')}${OP('=')}−${FR(MN(1), MV('N'))}${SIG('i')}ln${MV('p')}${PA(SUB(MV('ตัวที่ถูก'),'i'))}${EQ(fmtNum(L,3))}`;
+  $('#lossMath2').innerHTML = `เดาสุ่ม:&nbsp;${SUB(MV('L'),'สุ่ม')}${OP('=')}ln${MN(V)}${EQ(fmtNum(rl,3))}${OP('·')}${SUP(MN('e'), '−' + MV('L'))}${OP('=')}${SUP(MN('e'), '−' + MN(fmtNum(L,3)))}${EQ(pct(Math.exp(-L)))}`;
+  $('#lossSay').innerHTML = `ทุกก้าว แซนด์อ่านข้อความ ${fmtNum(T.batch)} ชิ้น ชิ้นละ ${T.cfg.ctx} ตัวอักษร แล้วเดาตัวถัดไปทุกตำแหน่ง (N = ${fmtNum(T.batch*T.cfg.ctx)} ครั้ง) · ตอนนี้โดยเฉลี่ยให้ความน่าจะเป็นกับตัวที่ถูก <b>${pct(Math.exp(-L))}</b> (เดาสุ่มได้ ${pct(1/V)})`;
+
+  const lr = T.last?.lr ?? 0, gn = T.last?.gnorm ?? 0;
+  $('#adamMath').innerHTML = `${MV('θ')}${OP('←')}${MV('θ')}${OP('−')}${MV('η')}${OP('·')}${PA(FR(MV('m̂'), SQRT(MV('v̂')) + OP('+') + MV('ε')) + OP('+') + MV('λ') + MV('θ'))}`;
+  $('#adamMath2').innerHTML = `${MV('η')}${EQ(fmtNum(lr, 6))}${OP(',')}&nbsp;‖${MV('g')}‖${EQ(fmtNum(gn,3))}${OP('→')}${MV('g')}${OP('←')}${MV('g')}${OP('·')}min${PA(MN(1) + ', ' + FR(MN(1), '‖' + MV('g') + '‖'))}`;
+  $('#adamSay').innerHTML = `θ คือน้ำหนักทั้ง ${fmtNum(T.params)} ตัวในสมอง · m̂ คือทิศทางที่ควรปรับ (ค่าเฉลี่ยของ gradient ∂L/∂θ) · v̂ ช่วยให้แต่ละน้ำหนักก้าวพอดีๆ · η มาจากสูตร <b>lr</b> ในแท็บสูตร (แก้ได้) · ถ้า ‖g‖ เกิน 1 จะถูกตัดไม่ให้ก้าวแรงเกิน`;
+
+  const c = T.cfg, d = c.d, per = 12*d*d + 13*d;
+  $('#sizeMath').innerHTML = `${MV('N')}${OP('=')}${MV('V')}${MV('d')}${OP('+')}${MV('ctx')}${OP('·')}${MV('d')}${OP('+')}${MV('L')}${OP('·')}${PA(MN(12) + SUP(MV('d'), MN(2)) + OP('+') + MN(13) + MV('d'))}${OP('+')}${MN(2)}${MV('d')}`;
+  $('#sizeMath2').innerHTML = `${OP('=')}${MN(V)}${OP('×')}${MN(d)}${OP('+')}${MN(c.ctx)}${OP('×')}${MN(d)}${OP('+')}${MN(c.layers)}${OP('×')}${MN(fmtNum(per))}${OP('+')}${MN(2*d)}${EQ(fmtNum(V*d + c.ctx*d + c.layers*per + 2*d))}`;
+  $('#sizeSay').innerHTML = `สมองขนาด<b>${T.size_label}</b>: ${c.layers} ชั้น · ${c.heads} หัว attention · เวกเตอร์ยาว d = ${d} · มองย้อนได้ ${c.ctx} ตัวอักษร · ฝึกบน ${dev} (เทียบ: AI อย่างผมมีน้ำหนักมากกว่านี้นับแสนเท่า)`;
+
+  $('#samples').innerHTML = T.samples.length ? T.samples.map(([s, p, txt]) =>
+    `<div class="s"><div class="meta">ก้าว ${fmtNum(s)} · ถาม “${esc(p)}”</div><b>${esc(txt) || '<span class="muted">(เงียบ)</span>'}</b></div>`).join('')
+    : '<p class="muted">กด ▶ ฝึก แล้วทุก 300 ก้าว แซนด์จะลองพูดให้ดูว่าพัฒนาไปแค่ไหน</p>';
+
+  if(!$('#sizes').dataset.done){
+    $('#sizes').innerHTML = Object.entries(T.sizes).map(([k, v]) =>
+      `<label><input type="radio" name="size" value="${k}" ${k === T.size ? 'checked' : ''}><b>${v.label}</b><br>${v.layers} ชั้น · d=${v.d} · มองย้อน ${v.ctx}</label>`).join('');
+    $('#sizes').dataset.done = 1;
+  }
+  if($('#train').classList.contains('on')) drawLoss();
+}
+function drawLoss(){
+  if(!S) return;
+  const T = S.train, Hh = T.history, c = $('#lossChart'), w = c.clientWidth, h = 170, dpr = devicePixelRatio || 1;
+  if(!w) return;
+  c.width = w*dpr; c.height = h*dpr;
+  const g = c.getContext('2d'); g.scale(dpr,dpr); g.font = '10.5px ' + FONT();
+  const rl = T.random_loss, L = 40, R = 8, Tp = 8, B = 20;
+  if(Hh.length < 2){ g.fillStyle = '#a8988a'; g.font = '13px ' + FONT(); g.fillText('กด ▶ ฝึก แล้วกราฟจะเริ่มขยับ', 14, h/2); return; }
+  const ymax = rl * 1.05, x0 = Hh[0][0], x1 = Hh[Hh.length-1][0];
+  const X = s => L + (s - x0)/(x1 - x0 || 1)*(w - L - R), Y = v => h - B - v/ymax*(h - Tp - B);
+  g.strokeStyle = '#2e251d'; g.fillStyle = '#a8988a';
+  for(let i=0;i<=4;i++){ const v = ymax*i/4; g.beginPath(); g.moveTo(L, Y(v)); g.lineTo(w-R, Y(v)); g.stroke(); g.textAlign = 'right'; g.fillText(v.toFixed(1), L-5, Y(v)+3); }
+  g.textAlign = 'left'; g.fillText('ก้าว ' + fmtNum(x0), L, h-5); g.textAlign = 'right'; g.fillText(fmtNum(x1), w-R, h-5);
+  g.setLineDash([5,4]); g.strokeStyle = '#e07a6a'; g.beginPath(); g.moveTo(L, Y(rl)); g.lineTo(w-R, Y(rl)); g.stroke(); g.setLineDash([]);
+  const line = (k, col) => { g.beginPath(); Hh.forEach((r,i) => i ? g.lineTo(X(r[0]),Y(r[k])) : g.moveTo(X(r[0]),Y(r[k]))); g.strokeStyle = col; g.lineWidth = 2; g.stroke(); };
+  line(1, '#e8b86b'); line(2, '#6cc3b5');
+}
+$('#trainBtn').onclick = async () => {
+  $('#trainBtn').disabled = true;
+  await post(S.train.running ? '/api/train/stop' : '/api/train/start');
+  setTimeout(() => { $('#trainBtn').disabled = false; loadState(); }, 600);
+};
+$('#resetBtn').onclick = async () => {
+  const size = document.querySelector('input[name=size]:checked')?.value || 'medium';
+  if(!confirm(`เริ่มสมองใหม่ขนาด${S.train.sizes[size].label}? สิ่งที่สมองเรียนมาทั้งหมดจะหายไป`)) return;
+  $('#resetBtn').disabled = true;
+  await post('/api/train/reset', {size});
+  $('#resetBtn').disabled = false; $('#sizes').dataset.done = ''; loadState();
+};
+
+/* ---------- formulas ---------- */
+const F_PRESETS = [
+  {label:'— เริ่มจากศูนย์ —', name:'', key:'', expr:'', unit:'', description:''},
+  {label:'โอกาสเดาถูกต่อตัวอักษร', name:'โอกาสเดาถูก', key:'hit', unit:'%', expr:'exp(-val_loss) * 100', description:'ความน่าจะเป็นเฉลี่ยที่แซนด์ให้กับตัวอักษรที่ถูก'},
+  {label:'ความคืบหน้าจากเดาสุ่ม', name:'ลดความงงไปแล้ว', key:'progress', unit:'เท่า', expr:'vocab / exp(val_loss)', description:'ความลังเลลดลงกี่เท่าเมื่อเทียบกับตอนเกิด'},
+  {label:'จำมากกว่าเข้าใจไหม (overfit)', name:'ช่องว่างการจำ', key:'gap', unit:'', expr:'val_loss - loss', description:'ถ้าค่านี้สูงขึ้นเรื่อยๆ แปลว่าแซนด์ท่องจำข้อมูลฝึกมากกว่าเข้าใจ ควรป้อนข้อมูลใหม่เพิ่ม'},
+  {label:'อ่านไปแล้วกี่รอบของข้อมูล', name:'จำนวนรอบที่อ่าน (epoch)', key:'epochs', unit:'รอบ', expr:'tokens_m * 1000000 / max(1, 45000 + texts_k * 1000)', description:'อ่านข้อมูลฝึกทั้งหมดไปแล้วกี่รอบโดยประมาณ'},
+  {label:'ความรู้ต่อหนึ่งน้ำหนัก', name:'ประสิทธิภาพสมอง', key:'efficiency', unit:'', expr:'skill / params_m', description:'ความเก่งต่อน้ำหนักหนึ่งล้านตัว'},
+];
+let fEditing = null, fTimer = null, plotFormula = null;
+function renderFormulas(){
+  const FS = S.formulas;
+  $('#fList').innerHTML = FS.list.map(f => {
+    const unit = f.unit ? `<small>${esc(f.unit)}</small>` : '';
+    const sub = f.html_sub ? `<div class="math sub"><span class="mo">=</span>${f.html_sub}<span class="mo">=</span><span class="eq">${fmtNum(f.value, 4)}</span></div>` : '';
+    return `<div class="fcard ${f.error ? 'bad' : ''}">
+      <div class="ahead"><div><b>${esc(f.name)}</b>${f.builtin ? '<span class="tag bi">ในตัว</span>' : '<span class="tag">สร้างเอง</span>'}${f.kind === 'train' ? '<span class="tag">ใช้ตอนฝึก</span>' : ''}</div>
+        <div class="fval">${fmtNum(f.value, 4)}${unit}</div></div>
+      <div class="math"><span class="lhs">${esc(f.key)}</span><span class="mo">=</span>${f.html}</div>${sub}
+      ${f.description ? `<div class="fdesc">${esc(f.description)}</div>` : ''}
+      ${f.error ? `<div class="ferr">⚠ ${esc(f.error)}</div>` : ''}
+      ${f.history.length > 1 ? `<canvas class="spark" data-key="${esc(f.key)}"></canvas>` : ''}
+      <div class="vrow">${f.used.map(u => `<span class="vchip" title="${esc(u.label)}"><b>${esc(u.name)}</b> = ${fmtNum(u.value, 4)}</span>`).join('')}</div>
+      <div class="abtn">
+        ${f.used.length ? `<button class="btn" data-fplot="${f.id}">📈 กราฟสูตร</button>` : ''}
+        <button class="btn" data-fedit="${f.id}">แก้ไข</button>
+        ${f.builtin && f.expr !== f.default_expr ? `<button class="btn" data-freset="${f.id}">คืนสูตรเดิม</button>` : ''}
+        ${f.builtin ? '' : `<button class="btn danger" data-fdel="${f.id}">ลบ</button>`}
+      </div></div>`;
+  }).join('');
+  $('#fRef').innerHTML = `<table class="reftbl">${FS.variables.map(v => `<tr><td>${esc(v.name)}</td><td>${esc(v.label)}</td><td>${fmtNum(v.value, 4)}</td></tr>`).join('')}
+    ${FS.list.map(f => `<tr><td>${esc(f.key)}</td><td>ผลของสูตร "${esc(f.name)}"</td><td>${fmtNum(f.value, 4)}</td></tr>`).join('')}</table>
+    <h3>ฟังก์ชัน</h3><table class="reftbl">${FS.funcs.map(([a,b]) => `<tr><td>${esc(a)}</td><td colspan="2">${esc(b)}</td></tr>`).join('')}</table>`;
+  const byId = id => FS.list.find(f => f.id === +id);
+  $$('[data-fedit]').forEach(b => b.onclick = () => openFormula(byId(b.dataset.fedit)));
+  $$('[data-fplot]').forEach(b => b.onclick = () => openPlot(byId(b.dataset.fplot)));
+  $$('[data-freset]').forEach(b => b.onclick = async () => { await post('/api/formulas/reset', {id:+b.dataset.freset}); loadState(); });
+  $$('[data-fdel]').forEach(b => b.onclick = async () => {
+    const f = byId(b.dataset.fdel); if(!confirm(`ลบสูตร "${f.name}" ?`)) return;
+    const r = await (await post('/api/formulas/delete', {id:f.id})).json(); if(!r.ok) alert(r.error); loadState();
+  });
+  drawSparks();
+}
+function drawSparks(){
+  if(!S) return;
+  $$('canvas.spark').forEach(c => {
+    const f = S.formulas.list.find(x => x.key === c.dataset.key);
+    const H = f.history, w = c.clientWidth, h = 42, dpr = devicePixelRatio || 1;
+    if(!w || H.length < 2) return;
+    c.width = w*dpr; c.height = h*dpr;
+    const g = c.getContext('2d'); g.scale(dpr,dpr);
+    const mn = Math.min(...H), mx = Math.max(...H), rg = (mx - mn) || 1;
+    const X = i => 2 + i/(H.length-1)*(w-4), Y = v => h - 4 - (v - mn)/rg*(h-14);
+    g.beginPath(); H.forEach((v,i) => i ? g.lineTo(X(i),Y(v)) : g.moveTo(X(i),Y(v)));
+    g.lineTo(X(H.length-1), h); g.lineTo(X(0), h); g.closePath(); g.fillStyle = 'rgba(232,184,107,.10)'; g.fill();
+    g.beginPath(); H.forEach((v,i) => i ? g.lineTo(X(i),Y(v)) : g.moveTo(X(i),Y(v)));
+    g.strokeStyle = '#e8b86b'; g.lineWidth = 1.6; g.stroke();
+    g.fillStyle = '#a8988a'; g.font = '10px ' + FONT(); g.fillText('ประวัติ: ' + fmtNum(H[0], 3) + ' → ' + fmtNum(H[H.length-1], 3), 4, 9);
+  });
+}
+function openFormula(f){
+  fEditing = f || null;
+  const builtin = !!(f && f.builtin), isNew = !f;
+  $('#fTitle').textContent = isNew ? 'สร้างสูตรใหม่' : (builtin ? `แก้สูตร: ${f.name}` : 'แก้ไขสูตร');
+  $('#fPresetWrap').classList.toggle('hidden', !isNew);
+  $('#fPreset').innerHTML = F_PRESETS.map((p,i) => `<option value="${i}">${esc(p.label)}</option>`).join('');
+  const src = f || F_PRESETS[0];
+  $('#fName').value = src.name || ''; $('#fKey').value = src.key || ''; $('#fExpr').value = src.expr || '';
+  $('#fDesc').value = src.description || ''; $('#fUnit').value = src.unit || '';
+  $('#fName').disabled = builtin; $('#fKey').disabled = !isNew;
+  $('#fMetaWrap').classList.toggle('hidden', builtin);
+  const vars = S.formulas.variables.concat(S.formulas.list.filter(x => !f || x.id < f.id).map(x => ({name:x.key, label:'ผลของสูตร ' + x.name})));
+  $('#fVarChips').innerHTML = 'ตัวแปร: ' + vars.map(v => `<button data-ins="${esc(v.name)}" title="${esc(v.label)}">${esc(v.name)}</button>`).join('');
+  $('#fFuncChips').innerHTML = 'ฟังก์ชัน: ' + ['sqrt(','^','exp(','log(','floor(','min(','max(','abs(','clamp(','tanh(','if('].map(s => `<button data-ins="${s}">${s}</button>`).join('');
+  $$('#fmodal [data-ins]').forEach(b => b.onclick = () => insertAt($('#fExpr'), b.dataset.ins));
+  $('#fErr').textContent = '';
+  $('#fmodal').classList.remove('hidden');
+  updatePreview(); (isNew ? $('#fName') : $('#fExpr')).focus();
+}
+function insertAt(t, s){
+  const a = t.selectionStart ?? t.value.length;
+  t.value = t.value.slice(0,a) + s + t.value.slice(t.selectionEnd ?? a);
+  t.focus(); t.selectionStart = t.selectionEnd = a + s.length; updatePreview();
+}
+function updatePreview(){
+  clearTimeout(fTimer);
+  fTimer = setTimeout(async () => {
+    const expr = $('#fExpr').value;
+    if(!expr.trim()){ $('#fPrev').innerHTML = '<div class="perr" style="color:var(--muted)">พิมพ์สูตรแล้วจะเห็นผลตรงนี้</div>'; return; }
+    const r = await (await post('/api/formulas/preview', {expr, id: fEditing?.id})).json();
+    const key = esc($('#fKey').value || '?');
+    $('#fPrev').innerHTML = r.ok
+      ? `<div class="math"><span class="lhs">${key}</span><span class="mo">=</span>${r.html}</div><div class="math sub"><span class="mo">=</span>${r.html_sub}<span class="mo">=</span><span class="eq">${fmtNum(r.value, 4)}</span></div>`
+      : `<div class="perr">⚠ ${esc(r.error)}</div>`;
+  }, 250);
+}
+$('#fExpr').addEventListener('input', updatePreview);
+$('#fKey').addEventListener('input', updatePreview);
+$('#fPreset').onchange = e => { const p = F_PRESETS[+e.target.value];
+  $('#fName').value = p.name; $('#fKey').value = p.key; $('#fExpr').value = p.expr; $('#fDesc').value = p.description; $('#fUnit').value = p.unit; updatePreview(); };
+$('#fCancel').onclick = () => $('#fmodal').classList.add('hidden');
+$('#fmodal').onclick = e => { if(e.target.id === 'fmodal') $('#fmodal').classList.add('hidden'); };
+$('#fSave').onclick = async () => {
+  const r = await (await post('/api/formulas/save', {id: fEditing?.id, name: $('#fName').value, key: $('#fKey').value,
+    expr: $('#fExpr').value, description: $('#fDesc').value, unit: $('#fUnit').value})).json();
+  if(!r.ok){ $('#fErr').textContent = r.error || 'บันทึกไม่สำเร็จ'; return; }
+  $('#fmodal').classList.add('hidden'); loadState();
+};
+$('#addFormula').onclick = () => openFormula(null);
+function openPlot(f){
+  plotFormula = f;
+  $('#pTitle').textContent = 'กราฟของสูตร: ' + f.name;
+  $('#pMath').innerHTML = `<span class="lhs">${esc(f.key)}</span><span class="mo">=</span>${f.html}`;
+  $('#pVar').innerHTML = f.used.map(u => `<option value="${esc(u.name)}">${esc(u.name)} — ${esc(u.label)}</option>`).join('');
+  setPlotRange(); $('#pmodal').classList.remove('hidden'); drawPlot();
+}
+function setPlotRange(){
+  const u = plotFormula.used.find(x => x.name === $('#pVar').value) || plotFormula.used[0];
+  const cur = Math.abs(u.value || 0);
+  $('#pLo').value = 0;
+  $('#pHi').value = cur < 1 && cur > 0 ? +(cur * 3).toPrecision(2) : Math.max(cur < 1 ? 1 : 10, Math.ceil(cur * 2.5));
+}
+$('#pVar').onchange = () => { setPlotRange(); drawPlot(); };
+$('#pLo').onchange = drawPlot; $('#pHi').onchange = drawPlot;
+$('#pClose').onclick = () => $('#pmodal').classList.add('hidden');
+$('#pmodal').onclick = e => { if(e.target.id === 'pmodal') $('#pmodal').classList.add('hidden'); };
+async function drawPlot(){
+  const f = plotFormula, v = $('#pVar').value;
+  const r = await (await post('/api/formulas/plot', {id:f.id, expr:f.expr, var:v, lo:+$('#pLo').value, hi:+$('#pHi').value})).json();
+  const c = $('#pCanvas'), w = c.clientWidth, h = 300, dpr = devicePixelRatio || 1;
+  c.width = w*dpr; c.height = h*dpr;
+  const g = c.getContext('2d'); g.scale(dpr,dpr); g.font = '11px ' + FONT();
+  if(!r.ok){ g.fillStyle = '#e07a6a'; g.fillText(r.error, 14, 24); $('#pNote').textContent = ''; return; }
+  const P = r.points.filter(p => p[1] != null), xs = r.points.map(p => p[0]);
+  const ys = P.map(p => p[1]).concat([r.current[1]]);
+  let y0 = Math.min(...ys), y1 = Math.max(...ys); if(y1 - y0 < 1e-12){ y0 -= 1; y1 += 1; }
+  const pad = (y1 - y0)*.08; y0 -= pad; y1 += pad;
+  const L = 60, R = 14, T = 14, B = 30;
+  const X = x => L + (x - xs[0])/(xs[xs.length-1] - xs[0])*(w - L - R), Y = y => h - B - (y - y0)/(y1 - y0)*(h - T - B);
+  g.strokeStyle = '#2e251d'; g.fillStyle = '#a8988a';
+  for(let i=0;i<=5;i++){
+    const yy = y0 + (y1-y0)*i/5, xx = xs[0] + (xs[xs.length-1]-xs[0])*i/5;
+    g.beginPath(); g.moveTo(L, Y(yy)); g.lineTo(w-R, Y(yy)); g.stroke();
+    g.textAlign = 'right'; g.fillText(fmtNum(+yy.toPrecision(3), 4), L-6, Y(yy)+4);
+    g.textAlign = 'center'; g.fillText(fmtNum(+xx.toPrecision(3), 4), X(xx), h-B+16);
+  }
+  g.beginPath(); let on = false;
+  r.points.forEach(([x,y]) => { if(y == null){ on = false; return; } on ? g.lineTo(X(x),Y(y)) : g.moveTo(X(x),Y(y)); on = true; });
+  g.strokeStyle = '#e8b86b'; g.lineWidth = 2.4; g.lineJoin = 'round'; g.stroke();
+  const [cx, cy] = r.current;
+  if(cx >= xs[0] && cx <= xs[xs.length-1]){
+    g.setLineDash([4,4]); g.strokeStyle = '#6cc3b5'; g.lineWidth = 1;
+    g.beginPath(); g.moveTo(X(cx), h-B); g.lineTo(X(cx), Y(cy)); g.lineTo(L, Y(cy)); g.stroke(); g.setLineDash([]);
+    g.fillStyle = '#6cc3b5'; g.beginPath(); g.arc(X(cx), Y(cy), 5, 0, 7); g.fill();
+    g.textAlign = 'left'; g.fillText(`ตอนนี้ (${fmtNum(cx,4)}, ${fmtNum(cy,4)})`, Math.min(X(cx)+8, w-150), Math.max(Y(cy)-8, 14));
+  }
+  $('#pNote').textContent = `แกนนอน: ${v} (${r.label}) · แกนตั้ง: ${f.key} · ตัวแปรอื่นคงค่าปัจจุบัน · จุดสีเขียวคือแซนด์ตอนนี้`;
+}
+
+/* ---------- data ---------- */
+function renderData(){
+  const D = S.data;
+  $('#srcTbl').innerHTML = '<tr><td class="muted">แหล่ง</td><td>ตัวอักษร</td><td>น้ำหนัก</td></tr>' +
+    D.sources.map(s => `<tr><td>${esc(s.name)}</td><td>${fmtNum(s.chars)}</td><td>×${fmtNum(s.weight)}</td></tr>`).join('');
+  $('#taughtList').innerHTML = D.taught.map(t => `<div class="item qa"><button class="del" data-tdel="${t.id}" title="ลบ">×</button>
+      <b>ถาม:</b> ${esc(t.q)}<br><b>ตอบ:</b> ${esc(t.a)}<div class="meta">${when(t.ts)}${t.source === 'correct' ? ' · แก้จากคำตอบในแชท' : ''}</div></div>`).join('')
+    || '<p class="muted">ยังไม่ได้สอนอะไร สอนชื่อคุณ เรื่องที่ชอบ หรือคำตอบที่อยากให้แซนด์พูดได้เลย</p>';
+  $('#textList').innerHTML = D.texts.map(t => `<div class="item"><button class="del" data-xdel="${t.id}" title="ลบ">×</button>
+      <b>${esc(t.title)}</b> <span class="meta">${fmtNum(t.chars)} ตัวอักษร</span><div class="meta">${esc(t.preview)}…</div></div>`).join('');
+  $('#seedPrev').textContent = D.seed_preview + '\n…';
+  $$('[data-tdel]').forEach(b => b.onclick = async () => { await post('/api/teach/delete', {id:+b.dataset.tdel}); loadState(); });
+  $$('[data-xdel]').forEach(b => b.onclick = async () => { if(confirm('ลบข้อความนี้?')){ await post('/api/text/delete', {id:+b.dataset.xdel}); loadState(); } });
+}
+$('#teachBtn').onclick = async () => {
+  const r = await (await post('/api/teach', {q: $('#tq').value, a: $('#ta').value})).json();
+  $('#teachErr').textContent = r.ok ? '' : r.error;
+  if(r.ok){ $('#tq').value = ''; $('#ta').value = ''; $('#tq').focus(); loadState(); }
+};
+$('#ta').addEventListener('keydown', e => { if(e.key === 'Enter' && !e.isComposing) $('#teachBtn').click(); });
+$('#textBtn').onclick = async () => {
+  const r = await (await post('/api/text/add', {title: $('#xt').value, content: $('#xc').value})).json();
+  $('#textErr').textContent = r.ok ? '' : r.error;
+  if(r.ok){ $('#xt').value = ''; $('#xc').value = ''; loadState(); }
+};
+$('#xfile').onchange = async e => {
+  for(const file of e.target.files){
+    const text = await file.text();
+    const r = await (await post('/api/text/add', {title: file.name, content: text})).json();
+    if(!r.ok) $('#textErr').textContent = `${file.name}: ${r.error}`;
+  }
+  e.target.value = ''; loadState();
+};
+
+/* ---------- sand orb ---------- */
+const oc = $('#orb'), ox = oc.getContext('2d');
+let grains = [], orbTarget = 60, orbThinking = false;
+function orb(){
+  while(grains.length < orbTarget) grains.push({a: Math.random()*Math.PI*2, r: 8 + Math.pow(Math.random(),.7)*44,
+    s: (0.004 + Math.random()*0.014)*(Math.random() < .5 ? -1 : 1), z: Math.random()*Math.PI*2, sz: .8 + Math.random()*1.8, hue: 32 + Math.random()*14});
+  if(grains.length > orbTarget) grains.length = orbTarget;
+  ox.clearRect(0,0,112,112);
+  const training = S?.train?.running, sp = orbThinking ? 4 : training ? 1.8 : 1;
+  const glow = ox.createRadialGradient(56,56,2,56,56,52);
+  glow.addColorStop(0, orbThinking ? 'rgba(232,184,107,.38)' : training ? 'rgba(108,195,181,.22)' : 'rgba(232,184,107,.16)');
+  glow.addColorStop(1, 'rgba(232,184,107,0)');
+  ox.fillStyle = glow; ox.fillRect(0,0,112,112);
+  for(const p of grains){
+    p.a += p.s*sp; p.z += .006*sp;
+    const X = 56 + Math.cos(p.a)*p.r, Y = 56 + Math.sin(p.a)*p.r*(.55 + .4*Math.cos(p.z));
+    ox.globalAlpha = .35 + .65*(Math.sin(p.z)+1)/2;
+    ox.fillStyle = `hsl(${p.hue},70%,${60 + 15*Math.sin(p.z)}%)`;
+    ox.fillRect(X, Y, p.sz, p.sz);
+  }
+  ox.globalAlpha = 1;
+  requestAnimationFrame(orb);
+}
+orb();
+addEventListener('resize', () => { drawLoss(); drawSparks(); renderSummary(); });
+
+/* ---------- boot ---------- */
+(async () => {
+  await loadState();
+  const h = await (await fetch('/api/history')).json();
+  if(!h.length){
+    $('#msgs').innerHTML = `<div class="empty"><b>แซนด์เพิ่งเกิด</b>
+      สมองของแซนด์สร้างขึ้นเองทั้งหมดและเริ่มจากศูนย์ ตอนแรกจะพูดมั่วๆ<br>
+      กด <b style="display:inline;font-size:inherit">▶ ฝึก</b> ด้านบน แล้วดูแซนด์ค่อยๆ เรียนภาษาที่แท็บ 📈 การฝึก<br>
+      ระหว่างนั้นลองคุยได้เลย แท็บ 🧠 สมองสดจะแสดงทุกสูตรตอนแซนด์คิด<br>
+      ลองถาม “สวัสดี”, “3 + 4 เท่ากับเท่าไร”, “คำตรงข้ามของ ร้อน”</div>`;
+  }
+  h.forEach(m => addMsg(m));
+})();
+</script>
+</body>
+</html>
