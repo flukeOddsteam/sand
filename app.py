@@ -455,7 +455,7 @@ def get_corpus():
         if total > 15_000_000:                 # จำกัดขนาด: ใช้บทความล่าสุดไม่เกิน 15 ล้านตัวอักษร
             break
         webs.append(r["title"] + "\n" + r["content"])
-    convos = [pair(r["q"], r["a"]) for r in q("SELECT q,a FROM convos ORDER BY id DESC LIMIT 40000")]
+    convos = [pair(r["q"], r["a"]) for r in q("SELECT q,a FROM convos ORDER BY id DESC LIMIT 40000")[::-1]]
     # ข้อความที่ไม่ได้ใช้ฝึก (validation) ตัดจากท้ายสุด จึงวางบทเรียนตั้งต้นไว้ท้าย
     unique = "\n".join(webs + texts + convos + liked + taught + [SEED_TEXT])
     weighted = [(t, w("w_taught", 8) - 1) for t in taught] + \
@@ -563,6 +563,7 @@ def gen_settings():
         "delay": int(float(setting("delay", "40"))),
         "auto_train": setting("auto_train", "1") == "1",
         "think": setting("think", "1") == "1",
+        "style": setting("style", "human"),
         "max_tokens": int(float(setting("max_tokens", "1024"))),
         "brain": setting("brain", "baby"),
     }
@@ -673,6 +674,52 @@ SYS_BASE = (
     "ถ้าไม่แน่ใจให้บอกตรงๆ ห้ามแต่งข้อมูลขึ้นเอง"
 )
 
+SYS_HUMAN = (
+    "คุณคือ \"แซนด์\" (Sand) AI ที่อยู่บนคอมพิวเตอร์ของผู้ใช้ คุยกับผู้ใช้เหมือนเพื่อนสนิทที่ฉลาดและใจดี\n"
+    "วิธีคุย:\n"
+    "- ตอบภาษาเดียวกับที่ผู้ใช้พิมพ์มา และใช้ระดับภาษาเดียวกัน (เขาพูดเล่นก็พูดเล่น เขาจริงจังก็จริงจัง) "
+    "ถ้าเป็นภาษาไทยใช้คำลงท้ายว่า ครับ แบบเป็นกันเอง\n"
+    "- คุยเล่นทั่วไปตอบสั้น 1-3 ประโยคแบบคนคุยแชท ไม่ใช้หัวข้อหรือรายการ ไม่ร่ายยาว\n"
+    "- สนใจความรู้สึกของผู้ใช้ ถ้าเขาเหนื่อย เศร้า หรือดีใจ ให้ตอบรับความรู้สึกนั้นก่อน\n"
+    "- บางครั้งถามกลับสั้นๆ เพื่อให้บทสนทนาไปต่อ แต่ไม่ต้องถามทุกครั้ง\n"
+    "- จำสิ่งที่ผู้ใช้เล่าไว้ก่อนหน้าในบทสนทนา แล้วหยิบมาพูดถึงเมื่อเข้ากัน\n"
+    "- ผู้ใช้อาจพิมพ์ผิด พิมพ์ตกหล่น หรือใช้ภาษาพูด ให้เดาความหมายแล้วตอบตามนั้นเลย ไม่ต้องทักเรื่องคำผิด "
+    "ยกเว้นเดาไม่ออกจริงๆ ให้ถามกลับ\n"
+    "- ถ้าเขาถามเรื่องที่ต้องอธิบาย ค่อยอธิบายให้ละเอียดพอเข้าใจ\n"
+    "- ไม่แน่ใจให้บอกตรงๆ ห้ามแต่งข้อมูลขึ้นเอง และไม่แกล้งทำเป็นมนุษย์ ถ้าถูกถามให้บอกว่าเป็น AI"
+)
+_DEEP = re.compile(r"(อธิบาย|คำนวณ|วิเคราะห์|เปรียบเทียบ|พิสูจน์|เขียนโค้ด|โค้ด|สูตร|แก้โจทย์|ขั้นตอน|explain|calculate|"
+                   r"analy[sz]e|compare|prove|code|step by step|[0-9]\s*[-+*/×÷^]\s*[0-9])", re.I)
+
+
+def is_casual(t):
+    """ข้อความคุยเล่น (สั้น ไม่ได้ขอให้อธิบาย/คำนวณ) → ตอบเร็วแบบคนแชท ไม่ต้องคิดในใจก่อน"""
+    t = t.strip()
+    return len(t) <= 80 and not _DEEP.search(t) and not t.startswith(("ค้น:", "ค้น :"))
+
+
+def user_profile():
+    """เรื่องของผู้ใช้ที่แซนด์จำได้ (จากที่ผู้ใช้บอกเองในแชท)"""
+    name = setting("user_name")
+    return f"\n\nชื่อของผู้ใช้: {name} (เรียกชื่อเขาได้เป็นครั้งคราว)" if name else ""
+
+
+_NAME_RE = re.compile(r"(?:^|\s|ผม|ฉัน|เรา|หนู|ชั้น|เค้า|พี่)ชื่อ(?:เล่น)?(?:ว่า)?\s*([^\s,.!?]{1,24})|"
+                      r"my name is\s+([A-Za-z][\w-]{0,20})|call me\s+([A-Za-z][\w-]{0,20})", re.I)
+_PARTICLE = re.compile(r"(นะครับ|นะคะ|นะค่ะ|ครับ|ค่ะ|คะ|คับ|นะ|จ้า|จ้ะ|ฮะ|จ้ะ|เด้อ|น้า)+$")
+
+
+def remember_name(text):
+    """ผู้ใช้บอกชื่อตัวเองในแชท (เช่น “ผมชื่อฟลุ๊คครับ”, “my name is Fluke”) → จำไว้เรียกชื่อ"""
+    m = _NAME_RE.search(text)
+    if not m or re.search(r"(อะไร|ไร|ไหม|มั้ย|\?|แซนด์ชื่อ)", text):
+        return
+    name = _PARTICLE.sub("", next(g for g in m.groups() if g)).strip()
+    if 0 < len(name) <= 20 and name.lower() not in ("แซนด์", "sand") and name != setting("user_name"):
+        set_setting("user_name", name)
+        event("memory", f"แซนด์จำได้แล้วว่าคุณชื่อ {name}")
+
+
 _CHUNKS = {"key": None, "chunks": []}
 
 
@@ -706,7 +753,7 @@ def retrieve(question, k=2):
 
 
 def build_big_prompt(user_text, think_on, tk, budget=3000, web_pages=None):
-    sys_txt = SYS_BASE
+    sys_txt = (SYS_HUMAN if gen_settings()["style"] == "human" else SYS_BASE) + user_profile()
     taught = q("SELECT q,a FROM taught ORDER BY id DESC LIMIT 60")[::-1]
     if taught:
         sys_txt += "\n\nสิ่งที่ผู้ใช้สอนคุณไว้ (เชื่อถือได้ ใช้ตอบได้เลย):\n" + "\n".join(f"- ถาม: {t['q']} → ตอบ: {t['a']}" for t in taught)
@@ -718,7 +765,7 @@ def build_big_prompt(user_text, think_on, tk, budget=3000, web_pages=None):
                     "ถ้าใช้ข้อมูลส่วนนี้ให้บอกชื่อเว็บหรือบทความที่อ้างอิงท้ายคำตอบ):\n"
                     + "\n---\n".join(f"[{p['title']} — {urllib.parse.urlparse(p['url']).netloc}] {p['text'][:1800]}"
                                        for p in web_pages))
-    hist = q("SELECT role,content FROM messages ORDER BY id DESC LIMIT 9")[::-1]
+    hist = q("SELECT role,content FROM messages ORDER BY id DESC LIMIT 21")[::-1]      # จำบทสนทนาย้อนหลัง ~10 รอบ
     head = f"<|im_start|>system\n{sys_txt}<|im_end|>\n"
     turns = [f"<|im_start|>{'user' if m['role'] == 'user' else 'assistant'}\n{m['content']}<|im_end|>\n" for m in hist]
     tail = "<|im_start|>assistant\n" + ("" if think_on else "<think>\n\n</think>\n\n")
@@ -733,7 +780,8 @@ def _stream_big(user_text, write):
     with BIG.lock:
         m, tk, key = BIG.model, BIG.tok, BIG.key
     meta = B.MODELS[key]
-    think_on = meta["think"] and gs["think"]
+    casual = gs["style"] == "human" and is_casual(user_text)
+    think_on = meta["think"] and gs["think"] and not casual
     web_used = search_before_answer(user_text, m, tk, meta, write)
     prompt, found, n_taught = build_big_prompt(user_text, think_on, tk, web_pages=web_used)
     ids = tk.encode(prompt)
@@ -755,7 +803,7 @@ def _stream_big(user_text, write):
     phase = "answer"
     buf = {"think": [], "answer": []}
     shown = {"think": "", "answer": ""}
-    for _ in range(max(16, gs["max_tokens"])):
+    for _ in range(max(16, min(gs["max_tokens"], 400) if casual else gs["max_tokens"])):
         nxt, st = B.sample_step(logits, tr, tk, T, top_k, top_p, rp, gen, ctx_ids=seq)
         gen.append(nxt)
         st["phase"] = phase
@@ -1293,9 +1341,89 @@ def learn_convo_job(langs, source, per_lang):
         say(f"เรียนบทสนทนาเสร็จ ได้เพิ่ม {CONVO_JOB['added']:,} คู่ — แซนด์จะฝึกกับบทสนทนาเหล่านี้ในรอบถัดไป", "🗣️")
 
 
+TEACH_TOPICS = ["greeting and small talk", "food and eating", "school or studying", "work and being tired",
+                "games", "movies and music", "the weather", "feeling sad and needing comfort", "good news and celebrating",
+                "travel plans", "pets", "family", "sports and exercise", "shopping", "weekend plans", "asking for advice",
+                "a funny story", "learning a new skill", "technology and phones", "being bored", "health and sleep",
+                "making plans with a friend", "asking Sand about itself", "a simple science question"]
+LANG_EN = {"th": "Thai", "en": "English", "ja": "Japanese", "zh": "Simplified Chinese", "ko": "Korean",
+           "vi": "Vietnamese", "id": "Indonesian", "es": "Spanish", "fr": "French", "de": "German",
+           "ru": "Russian", "pt": "Portuguese"}
+TEACH_JOB = {"active": False, "stop": False, "done": 0, "goal": 0, "added": 0, "error": "", "last": "", "finished": None}
+_TURN_RE = re.compile(r"^\s*(?:\*\*)?(ผู้ใช้|User|Person|แซนด์|Sand)(?:\*\*)?\s*[:：](?:\*\*)?\s*(.+)$", re.I)
+
+
+def parse_dialogue(text):
+    """แยกบทสนทนาที่สมองโตแต่ง ออกเป็นคู่ (ผู้ใช้ → แซนด์) ตามลำดับ"""
+    turns = []
+    for line in text.splitlines():
+        m = _TURN_RE.match(line)
+        if m:
+            who = "u" if m.group(1).lower() in ("ผู้ใช้", "user", "person") else "s"
+            msg = m.group(2).strip().strip('"“”')
+            if turns and turns[-1][0] == who:
+                turns[-1] = (who, turns[-1][1] + " " + msg)
+            else:
+                turns.append((who, msg))
+    return [(turns[i][1], turns[i + 1][1]) for i in range(len(turns) - 1) if turns[i][0] == "u" and turns[i + 1][0] == "s"]
+
+
+def teacher_prompt(lang, topic, rnd):
+    L = LANG_EN[lang]
+    typo = rnd.random() < 0.4
+    sys_t = ("You write realistic chat conversations for training a small AI named Sand (แซนด์). "
+             "Write only the conversation, no title, no notes. Every line starts with \"ผู้ใช้:\" (the human) "
+             "or \"แซนด์:\" (the AI). Keep these labels exactly, even when the conversation is in another language.")
+    usr = (f"Write a natural, casual chat in {L} about: {topic}. 3 to 5 exchanges. "
+           f"The human types like a real person in a chat app: short messages, casual words"
+           + (", and a few typos or missing letters" if typo else "") + ". "
+           f"Sand replies warmly and naturally in {L}, 1-2 short sentences, understands typos without pointing them out, "
+           f"and sometimes asks a short follow-up question. Start with the human.")
+    return f"<|im_start|>system\n{sys_t}<|im_end|>\n<|im_start|>user\n{usr}<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n"
+
+
+def teacher_job(langs, n):
+    import random as _r
+    rnd = _r.Random()
+    TEACH_JOB.update(active=True, stop=False, done=0, goal=n, added=0, error="", last="", finished=None)
+    say(f"สมองโตเริ่มแต่งบทสนทนาสอนแซนด์ทารก {n} เรื่อง", "👩‍🏫")
+    try:
+        for i in range(n):
+            if TEACH_JOB["stop"]:
+                break
+            with BIG.lock:
+                m, tk = BIG.model, BIG.tok
+            if m is None:
+                TEACH_JOB["error"] = "สมองโตถูกปิดไประหว่างทาง"
+                break
+            lang, topic = rnd.choice(langs), rnd.choice(TEACH_TOPICS)
+            try:
+                text = B.gen_text(m, tk, teacher_prompt(lang, topic, rnd), max_new=380, lock=BIG.lock)
+            except Exception as e:
+                TEACH_JOB["error"] = f"{type(e).__name__}: {e}"
+                break
+            pairs = parse_dialogue(text)
+            got = sum(_save_convo(lang, a, b, "teacher") for a, b in pairs)
+            TEACH_JOB["added"] += got
+            TEACH_JOB["done"] = i + 1
+            TEACH_JOB["last"] = text[:600]
+            say(f"แต่งบทสนทนา{CONVO_LANGS[lang][0]} เรื่อง “{topic}” ได้ {got} คู่", "👩‍🏫")
+            if pairs:
+                say(f"ผู้ใช้: {pairs[0][0][:80]} → แซนด์: {pairs[0][1][:80]}", "💬")
+        if TEACH_JOB["added"]:
+            event("convo", f"สมองโตแต่งบทสนทนาสอนแซนด์ทารก {TEACH_JOB['added']:,} คู่")
+            data_changed()
+    finally:
+        TEACH_JOB.update(active=False, finished=time.time())
+        say(f"สอนเสร็จ ได้บทสนทนา {TEACH_JOB['added']:,} คู่ · ปิดสมองโตแล้วกดฝึก แซนด์ทารกจะเรียนจากบทสนทนาเหล่านี้", "👩‍🏫")
+
+
 def convo_state():
     return {
         "job": {k: v for k, v in CONVO_JOB.items() if k != "stop"},
+        "teacher": {**{k: v for k, v in TEACH_JOB.items() if k != "stop"}, "big_ready": BIG.ready(),
+                    "big": B.MODELS[BIG.key]["label"] if BIG.ready() else None},
+        "user_name": setting("user_name"),
         "langs": [{"code": k, "name": v[0], "n": count("SELECT COUNT(*) n FROM convos WHERE lang=?", (k,))}
                   for k, v in CONVO_LANGS.items()],
         "sources": {k: v[0] for k, v in CONVO_SOURCES.items()},
@@ -1339,6 +1467,7 @@ def typo_note(fixes, young):
 
 
 def stream_chat(user_text, write):
+    remember_name(user_text)
     fixed, fixes = fix_typing(user_text)
     if fixes:
         young = fixes[0].get("loss_before") is None
@@ -1553,6 +1682,18 @@ class Handler(BaseHTTPRequestHandler):
             per = max(20, min(5000, int(d.get("per_lang", 300))))
             threading.Thread(target=learn_convo_job, args=(langs, src, per), daemon=True).start()
             ok()
+        elif p == "/api/learn/teacher":
+            if not BIG.ready():
+                return ok("ต้องโหลดสมองโตก่อน (ปุ่มเลือกสมองมุมขวาบน) — สมองโตจะเป็นครูแต่งบทสนทนาให้")
+            if TEACH_JOB["active"]:
+                return ok("กำลังสอนอยู่แล้ว")
+            langs = [c for c in d.get("langs", []) if c in LANG_EN] or ["th"]
+            n = max(1, min(500, int(d.get("n", 20))))
+            threading.Thread(target=teacher_job, args=(langs, n), daemon=True).start()
+            ok()
+        elif p == "/api/learn/teacher/stop":
+            TEACH_JOB["stop"] = True
+            ok()
         elif p == "/api/learn/convo/stop":
             CONVO_JOB["stop"] = True
             ok()
@@ -1670,6 +1811,10 @@ class Handler(BaseHTTPRequestHandler):
         elif p == "/api/settings":
             if "think" in d:
                 set_setting("think", "1" if d["think"] else "0")
+            if d.get("style") in ("human", "assistant"):
+                set_setting("style", d["style"])
+            if "forget_name" in d:
+                x("DELETE FROM settings WHERE key='user_name'")
             for k, lo, hi in (("temperature", 0.05, 3), ("top_k", 1, 200), ("delay", 0, 1000), ("max_tokens", 16, 4096)):
                 if k in d:
                     try:

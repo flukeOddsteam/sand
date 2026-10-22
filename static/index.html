@@ -494,6 +494,14 @@ details.ref summary{cursor:pointer;font-size:13px;color:var(--sand)}
           <span class="err" id="cvErr"></span></div>
         <div id="cvStatus" class="say"></div>
         <details class="ref"><summary>ดูบทสนทนาที่เรียนมาล่าสุด</summary><div id="cvRecent"></div></details>
+        <h4 style="margin:14px 0 4px">👩‍🏫 ให้สมองโตเป็นครู แต่งบทสนทนาสอนแซนด์ทารก</h4>
+        <div class="say">สมองโต (Qwen3) คุยแบบมนุษย์ได้อยู่แล้ว ให้มันแต่งบทสนทนาสั้นๆ หลายเรื่อง (กินข้าว เหนื่อยงาน เกม ปลอบใจ …)
+          ในภาษาที่ติ๊กไว้ด้านบน บางบทผู้ใช้พิมพ์ผิดด้วย แล้วแซนด์ทารกเอาไปฝึก · ไม่ต้องใช้อินเทอร์เน็ต
+          · ต้องโหลดสมองโตก่อน และสมองยิ่งใหญ่ บทสนทนายิ่งเป็นธรรมชาติ (ภาษาไทยของ Qwen3 0.6B ยังไม่ค่อยดี)</div>
+        <div class="abtn"><label style="margin:0;display:flex;gap:6px;align-items:center">จำนวนเรื่อง<input type="number" id="tcN" min="1" max="500" value="30" style="width:90px"></label>
+          <button class="btn primary" id="tcBtn">ให้สมองโตสอน</button><button class="btn hidden" id="tcStop">หยุด</button>
+          <span class="err" id="tcErr"></span></div>
+        <div id="tcStatus" class="say"></div>
         <h4 style="margin:14px 0 4px">⌨️ เดาคำพิมพ์ผิด</h4>
         <div class="say">ทุกรอบฝึก แซนด์จะทำ “สำเนาพิมพ์ผิด” ของบทสนทนา (กดตัวข้างๆ ตกตัว สลับตัว วรรณยุกต์ผิด ภาษาพูด ลืมเปลี่ยนแป้น)
           โดยคำตอบยังถูก — สมองจึงเรียนว่าคำผิดแปลว่าอะไร · ตอนคุย ถ้าพิมพ์ลืมเปลี่ยนแป้น เช่น <span class="mono">l;ylfu</span>
@@ -556,6 +564,13 @@ details.ref summary{cursor:pointer;font-size:13px;color:var(--sand)}
     <label style="display:flex;align-items:center;gap:8px;margin:0"><input type="checkbox" id="bThink" style="width:auto;display:inline;margin:0"> ให้คิดก่อนตอบ (เห็นความคิดสด · ช้าลงแต่ตอบดีขึ้น)</label>
     <label style="margin:0">ตอบยาวสุด (โทเคน)<input type="number" id="bMax" min="16" max="4096" step="64"></label>
   </div>
+  <div class="two" style="margin-top:10px">
+    <label style="margin:0">สไตล์การคุย<select id="bStyle">
+      <option value="human">🗣️ คุยแบบมนุษย์ — สั้น เป็นกันเอง ถามกลับ เข้าใจคำผิด</option>
+      <option value="assistant">📘 ผู้ช่วย — ตอบละเอียดเป็นขั้นตอน</option></select></label>
+    <div class="say" id="bMem" style="margin:0;align-self:end"></div>
+  </div>
+  <div class="say">โหมดคุยแบบมนุษย์: ข้อความคุยเล่นสั้นๆ จะตอบทันทีโดยไม่คิดในใจก่อน (เร็วเหมือนแชท) · ถ้าขอให้อธิบาย คำนวณ หรือเขียนโค้ด จะคิดก่อนตอบตามปกติ · จำบทสนทนาย้อนหลังราว 10 รอบ และจำชื่อคุณเมื่อคุณบอก</div>
   <div class="say">สมองโตใช้น้ำหนักที่ฝึกมาแล้วจากโมเดลเปิด แต่คิดด้วยเครื่องยนต์ <code>bigbrain.py</code> ที่เราเขียนเองทุกสูตร · สิ่งที่คุณสอนในแท็บข้อมูลฝึกจะถูกส่งให้สมองโตอ่านก่อนตอบทุกครั้ง และข้อความยาวที่ป้อนไว้จะถูกค้นหาส่วนที่เกี่ยวข้องมาให้อ่านด้วย</div>
   <div class="mfoot"><button class="btn" id="bClose">ปิด</button></div>
 </div></div>
@@ -894,7 +909,7 @@ async function loadState(){
   clearTimeout(pollTimer);
   const bigBusy = S.big.models.some(m => m.dl.state === 'downloading') || S.big.load.state === 'loading'
     || (S.web.settings.net && S.web.settings.learn && $('#data').classList.contains('on'))
-    || S.data.convo?.job?.active;
+    || S.data.convo?.job?.active || S.data.convo?.teacher?.active;
   pollTimer = setTimeout(loadState, bigBusy ? 1200 : S.train.running ? 2000 : 6000);
 }
 
@@ -1182,6 +1197,15 @@ function renderConvo(C, T){
       : `เรียนมาแล้วทั้งหมด <b>${fmtNum(C.total)}</b> คู่` + (J.finished ? ` · รอบล่าสุดได้เพิ่ม ${fmtNum(J.added)} คู่` : ''))
     + (J.error ? `<div class="err">${esc(J.error)}</div>` : '');
   $('#cvRecent').innerHTML = C.recent.map(r => `<div class="item qa"><span class="tag">${esc(r.lang)}</span> <b>ถาม:</b> ${esc(r.q)}<br><b>ตอบ:</b> ${esc(r.a)}</div>`).join('') || '<p class="muted">ยังไม่มี</p>';
+  const TC = C.teacher;
+  if(TC){
+    $('#tcBtn').disabled = TC.active || !TC.big_ready; $('#tcStop').classList.toggle('hidden', !TC.active);
+    $('#tcStatus').innerHTML = (!TC.big_ready && !TC.active ? '<span class="muted">ยังไม่ได้โหลดสมองโต — กดปุ่มเลือกสมองมุมขวาบน</span>'
+      : TC.active ? `${esc(TC.big || '')} กำลังแต่งเรื่องที่ ${TC.done + 1}/${TC.goal} · ได้บทสนทนาแล้ว ${fmtNum(TC.added)} คู่<div class="cvbar"><i style="width:${100 * TC.done / Math.max(1, TC.goal)}%"></i></div>`
+      : TC.finished ? `รอบล่าสุดได้ ${fmtNum(TC.added)} คู่ · ปิดสมองโตแล้วกด ▶ ฝึก ให้แซนด์ทารกเรียน` : `พร้อมสอนด้วย ${esc(TC.big || '')}`)
+      + (TC.last ? `<details class="ref"><summary>บทสนทนาล่าสุดที่แต่ง</summary><pre style="white-space:pre-wrap;font-size:12.5px;color:var(--muted)">${esc(TC.last)}</pre></details>` : '')
+      + (TC.error ? `<div class="err">${esc(TC.error)}</div>` : '');
+  }
   if(T) $('#typoEx').textContent = T.n ? `รอบนี้ทำไว้ ${fmtNum(T.n)} ชุด เช่น\n\n` + T.examples.join('\n') : 'ยังไม่ได้สร้าง (จะสร้างตอนเริ่มรอบฝึก)';
 }
 $('#cvBtn').onclick = async () => {
@@ -1189,6 +1213,11 @@ $('#cvBtn').onclick = async () => {
   $('#cvErr').textContent = r.ok ? '' : r.error; loadState();
 };
 $('#cvStop').onclick = async () => { await post('/api/learn/convo/stop', {}); loadState(); };
+$('#tcBtn').onclick = async () => {
+  const r = await (await post('/api/learn/teacher', {langs: [...cvPicked], n: +$('#tcN').value})).json();
+  $('#tcErr').textContent = r.ok ? '' : r.error; loadState();
+};
+$('#tcStop').onclick = async () => { await post('/api/learn/teacher/stop', {}); loadState(); };
 $('#teachBtn').onclick = async () => {
   const r = await (await post('/api/teach', {q: $('#tq').value, a: $('#ta').value})).json();
   $('#teachErr').textContent = r.ok ? '' : r.error;
@@ -1406,6 +1435,10 @@ function renderBrain(){
         ${loading || ld.state !== 'error' || ld.key !== m.key ? '' : `<div class="warn">โหลดไม่สำเร็จ: ${esc(ld.error)}</div>`}</div>`;
     }).join('');
   $('#bThink').checked = S.settings.think;
+  $('#bStyle').value = S.settings.style || 'human';
+  const un = S.data.convo?.user_name;
+  $('#bMem').innerHTML = un ? `แซนด์จำได้ว่าคุณชื่อ <b>${esc(un)}</b> · <a href="#" id="bForget" style="color:var(--teal)">ให้ลืม</a>` : 'บอกชื่อในแชทได้ เช่น “ผมชื่อ…” แซนด์จะจำไว้เรียก';
+  if($('#bForget')) $('#bForget').onclick = async e => { e.preventDefault(); await post('/api/settings', {forget_name: 1}); loadState(); };
   if(document.activeElement !== $('#bMax')) $('#bMax').value = S.settings.max_tokens;
   $$('#bList [data-dl]').forEach(b => b.onclick = async () => { await post('/api/big/download', {model: b.dataset.dl}); loadState(); });
   $$('#bList [data-stop]').forEach(b => b.onclick = async () => { await post('/api/big/stop', {model: b.dataset.stop}); loadState(); });
@@ -1419,6 +1452,7 @@ $('#brainBtn').onclick = () => { $('#bmodal').classList.remove('hidden'); render
 $('#bClose').onclick = () => $('#bmodal').classList.add('hidden');
 $('#bmodal').onclick = e => { if(e.target.id === 'bmodal') $('#bmodal').classList.add('hidden'); };
 $('#bThink').onchange = e => post('/api/settings', {think: e.target.checked ? 1 : 0});
+$('#bStyle').onchange = e => post('/api/settings', {style: e.target.value});
 $('#bMax').onchange = e => post('/api/settings', {max_tokens: +e.target.value});
 
 /* ---------- sand orb ---------- */

@@ -404,3 +404,38 @@ def quick_text(model, tok, prompt, max_new=20, stop_text=("\n",)):
     for s in stop_text:
         text = text.split(s)[0]
     return text.strip()
+
+
+def gen_text(model, tok, prompt, max_new=300, T=0.85, top_p=0.92, rep=1.1, stop_text=(), lock=None):
+    """เขียนข้อความยาวแบบสุ่มตามความน่าจะเป็น (ใช้ให้สมองโตแต่งบทสนทนาสอนแซนด์ทารก)
+    p = softmax(z / T) → ตัดหาง top-p → สุ่ม · ลดคะแนนโทเคนที่ใช้ไปแล้ว (rep) กันพูดวน"""
+    import contextlib
+    lock = lock or contextlib.nullcontext()
+    ids = tok.encode(prompt)
+    stops = {i for i in (tok.id("<|im_end|>"), tok.id("<|endoftext|>")) if i is not None}
+    cache = model.new_cache()
+    with lock:
+        logits, _ = model.forward(ids, 0, cache)
+    out = []
+    for _ in range(max_new):
+        z = logits.float().cpu()
+        if rep != 1.0 and out:
+            idx = torch.tensor(sorted(set(out)), dtype=torch.long)
+            zz = z[idx]
+            z[idx] = torch.where(zz > 0, zz / rep, zz * rep)
+        probs = torch.softmax(z / max(T, 1e-3), -1)
+        sp, si = torch.sort(probs, descending=True)
+        cum = torch.cumsum(sp, 0)
+        sp[(cum - sp) > top_p] = 0
+        nxt = int(si[torch.multinomial(sp / sp.sum(), 1)].item())
+        if nxt in stops:
+            break
+        out.append(nxt)
+        if stop_text and len(out) % 8 == 0 and any(s in tok.decode(out) for s in stop_text):
+            break
+        with lock:
+            logits, _ = model.forward([nxt], len(ids) + len(out) - 1, cache)
+    text = tok.decode(out)
+    for s in stop_text:
+        text = text.split(s)[0]
+    return text.strip()
