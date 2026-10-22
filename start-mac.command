@@ -63,10 +63,10 @@ if [ ! -x .venv/bin/python ]; then
 fi
 
 source .venv/bin/activate
-if ! python -c "import torch" 2>/dev/null; then
-  echo "กำลังติดตั้ง PyTorch (ครั้งแรกครั้งเดียว ~200MB)..."
+if ! python -c "import torch, tokenizers" 2>/dev/null; then
+  echo "กำลังติดตั้ง PyTorch และ tokenizers (ครั้งแรกครั้งเดียว ~200MB)..."
   python -m pip install --upgrade pip >/dev/null
-  if ! python -m pip install torch; then
+  if ! python -m pip install torch tokenizers; then
     echo ""
     echo "❌ ติดตั้ง PyTorch ไม่สำเร็จ · Python ใน .venv: $(describe python) · macOS: $(sw_vers -productVersion 2>/dev/null || uname -r)"
     echo "   ส่งข้อความนี้ให้ Claude ดูได้เลย"

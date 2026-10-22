@@ -222,6 +222,23 @@ details.ref summary{cursor:pointer;font-size:13px;color:var(--sand)}
 .fprev .perr{color:var(--rose);font-size:13px;padding:10px 12px}
 .mfoot{display:flex;justify-content:flex-end;gap:8px;margin-top:6px}
 .merr{color:var(--rose);font-size:13px;margin-right:auto;align-self:center}
+/* brain picker + thinking */
+.brainbtn{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:8px 12px;cursor:pointer;font-size:13px;white-space:nowrap}
+.brainbtn:hover{border-color:var(--sand2)}
+.brainbtn b{color:var(--sand);font-weight:600}
+.bopt{background:var(--deep);border:1px solid var(--line);border-radius:12px;padding:12px;margin-bottom:10px}
+.bopt.on{border-color:var(--sand)}
+.bopt h5{margin:0 0 4px;font-size:15px;display:flex;justify-content:space-between;gap:8px;align-items:center}
+.bopt .muted{font-size:12.5px}
+.prog{height:6px;background:var(--panel2);border-radius:9px;overflow:hidden;margin:8px 0 4px}
+.prog i{display:block;height:100%;background:linear-gradient(90deg,var(--sand2),var(--sand));transition:width .4s}
+.warn{color:var(--rose);font-size:12.5px;margin-top:4px}
+.thinkbox{background:var(--deep);border:1px dashed var(--line);border-radius:10px;padding:6px 10px;margin-bottom:6px;font-size:13px;color:var(--muted)}
+.thinkbox summary{cursor:pointer;color:var(--teal);font-size:12.5px}
+.thinkbox div{white-space:pre-wrap;max-height:220px;overflow-y:auto;margin-top:4px;line-height:1.6}
+.stream span.think{opacity:.6;font-style:italic;font-size:15px}
+.stream span.mark{font-size:11.5px;color:var(--teal);border:1px solid var(--teal);border-radius:6px;padding:0 5px;margin:0 3px}
+.stream span.wait{color:var(--muted);font-size:11px}
 #pCanvas{width:100%;height:300px;display:block;background:var(--deep);border-radius:10px;margin-bottom:8px}
 
 @media (max-width:980px){
@@ -241,6 +258,7 @@ details.ref summary{cursor:pointer;font-size:13px;color:var(--sand)}
     <div class="sub" id="xptext">กำลังตื่น…</div>
   </div>
   <div class="spacer"></div>
+  <button class="brainbtn" id="brainBtn" title="เลือกสมอง">🧠 …</button>
   <div class="trainpill" id="trainpill">
     <span class="dot"></span><span id="trainText">…</span>
     <button class="btn sm" id="trainBtn">▶ ฝึก</button>
@@ -291,10 +309,8 @@ details.ref summary{cursor:pointer;font-size:13px;color:var(--sand)}
         <div class="card">
           <h4>② สัญญาณวิ่งผ่านสมอง <small id="layerNote"></small></h4>
           <div class="layers" id="layers"></div>
-          <div class="math" style="margin-top:24px">
-            <span class="mvar">x</span><span class="mo">←</span><span class="mvar">x</span><span class="mo">+</span><span class="mf">Attention</span><span class="mp">(</span><span class="mf">LN</span><span class="mp">(</span><span class="mvar">x</span><span class="mp">))</span><span class="mo">+</span><span class="mf">GELU</span><span class="mp">(</span><span class="mf">LN</span><span class="mp">(</span><span class="mvar">x</span><span class="mp">)</span><span class="mvar">W</span><sub>1</sub><span class="mp">)</span><span class="mvar">W</span><sub>2</sub>
-          </div>
-          <div class="say">แต่ละแท่งคือความแรงของสัญญาณ ‖x‖ หลังผ่านแต่ละชั้น ทุกชั้นเพิ่ม “ความเข้าใจ” ลงไปในเวกเตอร์เดิม</div>
+          <div class="math" style="margin-top:24px" id="layerMath"></div>
+          <div class="say" id="layerSay"></div>
         </div>
         <div class="card">
           <h4>③ เลือกตัวอักษรถัดไป (softmax) <small id="smNote"></small></h4>
@@ -415,6 +431,17 @@ details.ref summary{cursor:pointer;font-size:13px;color:var(--sand)}
   <div class="mfoot"><span class="merr" id="fErr"></span><button class="btn" id="fCancel">ยกเลิก</button><button class="btn primary" id="fSave">บันทึก</button></div>
 </div></div>
 
+<div id="bmodal" class="modal hidden"><div class="mbox" style="width:min(680px,100%)">
+  <h2>เลือกสมองของแซนด์</h2>
+  <div id="bList"></div>
+  <div class="two" style="margin-top:6px">
+    <label style="display:flex;align-items:center;gap:8px;margin:0"><input type="checkbox" id="bThink" style="width:auto;display:inline;margin:0"> ให้คิดก่อนตอบ (เห็นความคิดสด · ช้าลงแต่ตอบดีขึ้น)</label>
+    <label style="margin:0">ตอบยาวสุด (โทเคน)<input type="number" id="bMax" min="16" max="4096" step="64"></label>
+  </div>
+  <div class="say">สมองโตใช้น้ำหนักที่ฝึกมาแล้วจากโมเดลเปิด แต่คิดด้วยเครื่องยนต์ <code>bigbrain.py</code> ที่เราเขียนเองทุกสูตร · สิ่งที่คุณสอนในแท็บข้อมูลฝึกจะถูกส่งให้สมองโตอ่านก่อนตอบทุกครั้ง และข้อความยาวที่ป้อนไว้จะถูกค้นหาส่วนที่เกี่ยวข้องมาให้อ่านด้วย</div>
+  <div class="mfoot"><button class="btn" id="bClose">ปิด</button></div>
+</div></div>
+
 <div id="pmodal" class="modal hidden"><div class="mbox" style="width:min(740px,100%)">
   <h2 id="pTitle">กราฟของสูตร</h2>
   <div class="math" id="pMath"></div>
@@ -439,7 +466,7 @@ const FONT = () => getComputedStyle(document.body).fontFamily;
 function fmtNum(x, dig=2){
   if(x == null || isNaN(x)) return '?';
   if(!isFinite(x)) return '∞';
-  if(Math.abs(x) >= 1e6){ const [m, e] = x.toExponential(2).split('e+');
+  if(Math.abs(x) >= 1e12){ const [m, e] = x.toExponential(2).split('e+');
     return m + '×10' + [...e].map(d => '⁰¹²³⁴⁵⁶⁷⁸⁹'[d]).join(''); }
   if(Math.abs(x - Math.round(x)) < 1e-9) return Math.round(x).toLocaleString('en-US');
   if(Math.abs(x) < 0.01) return x.toPrecision(3);
@@ -458,7 +485,9 @@ const SUB = (b,s) => `${b}<sub>${s}</sub>`;
 const SQRT = a => `<span class="sqrt"><svg class="rad" viewBox="0 0 10 24" preserveAspectRatio="none"><path d="M0.5 14 L3 12.5 L6 23 L9.6 0.6" vector-effect="non-scaling-stroke"/></svg><span class="under">${a}</span></span>`;
 const SIG = s => `<span class="bigop">Σ<sub>${s}</sub></span>`;
 const EQ = v => `${OP('=')}<span class="eq">${v}</span>`;
-const showCh = c => c === ' ' ? '␣' : c === '\n' ? '↵' : c;
+const showCh = c => c === '' ? '∅' : c === ' ' ? '␣' : String(c).replace(/\n/g, '↵').replace(/^ +| +$/g, m => '␣'.repeat(m.length));
+const isBig = () => live.info?.mode === 'big';
+const UNIT = () => isBig() ? 'โทเคน' : 'ตัวอักษร';
 const CH = c => `<span class="mch">“${esc(showCh(c))}”</span>`;
 const heat = (p, a=.75) => {
   const r = p < .5 ? [224,122,106] : [123,216,143], m = [232,184,107];
@@ -520,7 +549,9 @@ function setActs(row, m){
     if(d.error) return;
     switchTab('live');
     live.tokens = d.tokens; live.info = d.info; live.sel = 0; live.summary = d.summary;
-    $('#liveStatus').innerHTML = `ย้อนดูคำตอบเก่า · สมองตอนนั้นฝึกมา <b>${fmtNum(d.info.step)}</b> ก้าว · T = ${d.info.T} · top-k = ${d.info.top_k}`;
+    $('#liveStatus').innerHTML = d.info.mode === 'big'
+      ? `ย้อนดูคำตอบเก่า · สมอง <b>${esc(d.info.label)}</b> · T = ${d.info.T} · top-k = ${d.info.top_k}${d.thinking ? ' · มีความคิดก่อนตอบ ' + d.summary.think_tokens + ' โทเคน (ตัวเอียง)' : ''}`
+      : `ย้อนดูคำตอบเก่า · สมองตอนนั้นฝึกมา <b>${fmtNum(d.info.step)}</b> ก้าว · T = ${d.info.T} · top-k = ${d.info.top_k}`;
     renderStream(); inspectTok(0); renderSummary();
   };
 }
@@ -535,7 +566,7 @@ async function send(){
   live.tokens = []; live.sel = null; live.summary = null; live.follow = true;
   $('#sumCard').classList.add('hidden');
   renderStream();
-  let full = '', t0 = performance.now(), gotEnd = false;
+  let full = '', thought = '', t0 = performance.now(), gotEnd = false, tbox = null;
   try{
     const res = await post('/api/chat', {message:text});
     const reader = res.body.getReader(), dec = new TextDecoder();
@@ -550,15 +581,27 @@ async function send(){
         const d = JSON.parse(l);
         if(d.start){
           live.info = d.start;
-          $('#liveStatus').innerHTML = `สมองขนาด${d.start.size_label} · ${d.start.layers} ชั้น · ${d.start.heads} หัว attention · ฝึกมา <b>${fmtNum(d.start.step)}</b> ก้าว · อ่านบริบท ${d.start.prompt_chars} ตัวอักษร`;
+          const st = d.start;
+          $('#liveStatus').innerHTML = st.mode === 'big'
+            ? `สมอง <b>${esc(st.label)}</b> · ${st.layers} ชั้น · ${st.heads} หัว attention (K/V ร่วมกัน ${st.kv} หัว) · อ่าน ${fmtNum(st.prompt_tokens)} โทเคน`
+              + (st.taught ? ` · ใช้สิ่งที่สอน ${st.taught} เรื่อง` : '') + (st.retrieved.length ? ` · ค้นเจอจาก: ${esc(st.retrieved.join(', '))}` : '')
+            : `สมองขนาด${st.size_label} · ${st.layers} ชั้น · ${st.heads} หัว attention · ฝึกมา <b>${fmtNum(st.step)}</b> ก้าว · อ่านบริบท ${st.prompt_chars} ตัวอักษร`;
         }
         if(d.tok){
           live.tokens.push(d.tok);
-          if(!d.tok.stop){ full += d.tok.ch; row.body.textContent = full; $('#msgs').scrollTop = 1e9; }
+          const tk = d.tok;
+          if(tk.phase === 'think' && !tk.marker && !tk.stop){
+            if(!tbox){ tbox = document.createElement('details'); tbox.className = 'thinkbox'; tbox.open = true;
+              tbox.innerHTML = '<summary>💭 แซนด์กำลังคิด…</summary><div></div>'; row.body.before(tbox); }
+            thought += tk.ch; tbox.querySelector('div').textContent = thought; tbox.querySelector('div').scrollTop = 1e9;
+          } else if(tk.marker === 'think_end' && tbox){
+            tbox.open = false; tbox.querySelector('summary').textContent = `💭 ดูความคิดก่อนตอบ (${live.tokens.filter(x => x.phase === 'think').length} โทเคน)`;
+          } else if(!tk.stop){ full += tk.ch; row.body.textContent = full; }
+          $('#msgs').scrollTop = 1e9;
           appendStreamTok(live.tokens.length - 1);
           if(live.follow) inspectTok(live.tokens.length - 1);
           const secs = (performance.now() - t0) / 1000;
-          $('#liveStatus').innerHTML = `กำลังคิดตัวอักษรที่ <b>${live.tokens.length}</b> · ${fmtNum(live.tokens.length / secs, 1)} ตัว/วินาที`;
+          $('#liveStatus').innerHTML = `กำลังคิด${UNIT()}ที่ <b>${live.tokens.length}</b> · ${fmtNum(live.tokens.length / secs, 1)} ${UNIT()}/วินาที` + (tk.phase === 'think' ? ' · 💭 กำลังคิดในใจ' : '');
         }
         if(d.error){
           gotEnd = true;
@@ -569,9 +612,10 @@ async function send(){
           gotEnd = true;
           row.classList.remove('thinking');
           if(!full) row.body.textContent = '…';
+          if(tbox) tbox.open = false;
           setActs(row, {id:d.id, rating:0, has_trace:true});
           live.summary = d.summary; renderSummary();
-          $('#liveStatus').innerHTML = `คิดเสร็จ ${d.summary.chars} ตัวอักษรใน ${d.summary.secs} วินาที · คลิกตัวอักษรเพื่อดูการคิดของแต่ละตัว`;
+          $('#liveStatus').innerHTML = `คิดเสร็จ ${live.tokens.length} ${UNIT()}ใน ${d.summary.secs} วินาที (${fmtNum(live.tokens.length / Math.max(d.summary.secs, .01), 1)} ${UNIT()}/วิ) · คลิกที่ข้อความเพื่อดูการคิดของแต่ละ${UNIT()}`;
         }
       }
     }
@@ -589,9 +633,11 @@ $('#f').addEventListener('submit', e => { e.preventDefault(); send(); });
 /* ---------- live brain ---------- */
 const live = {tokens: [], sel: null, info: null, summary: null, follow: true};
 function tokSpan(t, i){
+  if(t.marker) return `<span class="mark" data-i="${i}">${t.marker === 'think_start' ? '💭 เริ่มคิด' : '✓ คิดเสร็จ → ตอบ'}</span>`;
+  if(!t.stop && t.ch === '') return `<span class="wait" data-i="${i}" title="ส่วนหนึ่งของตัวอักษร (รอไบต์ถัดไป)">·</span>`;
   if(t.stop) return `<span class="stop" data-i="${i}" title="แซนด์ตัดสินใจจบประโยค (ขึ้นบรรทัดใหม่) p = ${pct(t.p)}">↵ จบ</span>`;
   const alt = t.top.slice(0,3).map(([c,p]) => `“${showCh(c)}” ${pct(p)}`).join('  ');
-  return `<span data-i="${i}" style="background:${heat(t.p,.55)}" title="p = ${pct(t.p)}\nตัวเลือก: ${esc(alt)}">${esc(t.ch === ' ' ? ' ' : t.ch)}</span>`;
+  return `<span data-i="${i}" class="${t.phase === 'think' ? 'think' : ''}" style="background:${heat(t.p,.55)}" title="p = ${pct(t.p)}\nตัวเลือก: ${esc(alt)}">${esc(t.ch === ' ' ? ' ' : t.ch)}</span>`;
 }
 function renderStream(){
   $('#stream').innerHTML = live.tokens.length ? live.tokens.map(tokSpan).join('') : '<span class="stop">รอข้อความ…</span>';
@@ -611,29 +657,41 @@ function inspectTok(i){
   $$('#stream [data-i]').forEach(s => s.classList.toggle('sel', +s.dataset.i === i));
   $('#inspect').classList.remove('hidden');
   const prev = live.tokens.slice(0, i).filter(x => !x.stop).map(x => x.ch).join('');
-  const target = t.stop ? 'การจบประโยค' : `ตัวอักษร ${CH(t.ch)}`;
+  const target = t.stop ? 'การจบคำตอบ' : t.marker ? (t.marker === 'think_start' ? 'การเริ่มคิด' : 'การเลิกคิดแล้วตอบ') : `${UNIT()} ${CH(t.ch)}`;
+  const big = isBig();
 
   // ① attention
   const n = t.ctx.length, mx = Math.max(...t.att, 1e-9);
-  $('#ctxview').innerHTML = [...t.ctx].map((c, j) => {
+  const ctxArr = Array.isArray(t.ctx) ? t.ctx : [...t.ctx];
+  $('#ctxview').innerHTML = ctxArr.map((c, j) => {
     const w = t.att[j] / mx;
-    const inner = c === '\n' ? '<span class="nl">↵</span><br>' : esc(c === ' ' ? ' ' : c);
+    const inner = c === '\n' ? '<span class="nl">↵</span><br>' : esc(c).replace(/\n/g, '<span class="nl">↵</span><br>').replace(/ /g, '\u00a0');
     return `<span style="background:rgba(108,195,181,${(w*.85).toFixed(3)})" title="น้ำหนัก ${(t.att[j]*100).toFixed(1)}%">${inner}</span>`;
   }).join('');
   const af = t.att_focus, s = af.dot / Math.sqrt(af.dk);
-  $('#attNote').textContent = `ชั้นสุดท้าย · ${t.att.length} ตัวล่าสุด`;
-  $('#attMath').innerHTML = `${SUB(MV('a'),'j')}${OP('=')}${FR(SUP(MN('e'), SUB(MV('s'),'j')), SIG('i') + SUP(MN('e'), SUB(MV('s'),'i')))}${OP(',')}&nbsp;${SUB(MV('s'),'j')}${OP('=')}${FR(MV('q') + OP('·') + SUB(MV('k'),'j'), SQRT(SUB(MV('d'),'k')))}`;
+  $('#attNote').textContent = `ชั้นสุดท้าย · ${t.att.length} ${UNIT()}ล่าสุด`;
+  const qk = big ? PA(SUB(MV('R'),'i') + MV('q')) + OP('·') + PA(SUB(MV('R'),'j') + SUB(MV('k'),'j')) : MV('q') + OP('·') + SUB(MV('k'),'j');
+  $('#attMath').innerHTML = `${SUB(MV('a'),'j')}${OP('=')}${FR(SUP(MN('e'), SUB(MV('s'),'j')), SIG('i') + SUP(MN('e'), SUB(MV('s'),'i')))}${OP(',')}&nbsp;${SUB(MV('s'),'j')}${OP('=')}${FR(qk, SQRT(SUB(MV('d'),'k')))}`;
   $('#attMath2').innerHTML = `${SUB(MV('a'), CH(af.ch))}${OP('=')}${FR(SUP(MN('e'), FR(MN(fmtNum(af.dot)), SQRT(MN(af.dk)))), MN(fmtNum(af.sum)))}${OP('=')}${FR(SUP(MN('e'), MN(fmtNum(s))), MN(fmtNum(af.sum)))}${EQ(pct(af.w))}`;
-  $('#attSay').innerHTML = `ก่อนจะเลือก${target} หัว attention ที่ ${af.head + 1} มองย้อนไปที่ ${CH(af.ch)} (ย้อนหลัง ${af.back} ตัว) มากที่สุด ให้น้ำหนัก <b>${pct(af.w)}</b> · สีเขียวในข้อความด้านบนคือที่แซนด์ “มอง” (เฉลี่ยทุกหัว)`;
+  $('#attSay').innerHTML = `ก่อนจะเลือก${target} หัว attention ที่ ${af.head + 1} มองย้อนไปที่ ${CH(af.ch)} (ย้อนหลัง ${af.back} ${UNIT()}) มากที่สุด ให้น้ำหนัก <b>${pct(af.w)}</b> · สีเขียวคือที่แซนด์ “มอง” (เฉลี่ยทุกหัว)`
+    + (big ? ` · R คือการหมุนเวกเตอร์ตามตำแหน่ง (RoPE) ทำให้รู้ว่าแต่ละ${UNIT()}อยู่ห่างกันแค่ไหน · หัว q ${live.info.heads} หัวใช้ k, v ร่วมกัน ${live.info.kv} ชุด (GQA) ประหยัดหน่วยความจำ` : '');
 
   // ② layers
   const nm = Math.max(...t.norms);
-  $('#layers').innerHTML = t.norms.map((v, j) => `<div style="height:${Math.max(4, v/nm*58)}px"><em>${fmtNum(v,1)}</em><span>ชั้น ${j+1}</span></div>`).join('');
+  const many = t.norms.length > 10;
+  $('#layers').innerHTML = t.norms.map((v, j) => `<div style="height:${Math.max(4, v/nm*58)}px" title="ชั้น ${j+1}: ‖x‖ = ${fmtNum(v,1)}">${many ? '' : `<em>${fmtNum(v,1)}</em>`}<span>${!many || (j+1) % 4 === 0 || j === 0 ? (many ? j+1 : 'ชั้น ' + (j+1)) : ''}</span></div>`).join('');
+  const X = MV('x'), H = MV('h');
+  $('#layerMath').innerHTML = big
+    ? `${H}${OP('=')}${FR(X, SQRT('mean' + PA(SUP(X, MN(2))) + OP('+') + MV('ε')))}${OP('·')}${MV('γ')}${OP(';')}&nbsp;${X}${OP('←')}${X}${OP('+')}<span class="mf">Attn</span>${PA(H)}${OP(';')}&nbsp;${X}${OP('←')}${X}${OP('+')}${PA('SiLU' + PA(H + SUB(MV('W'),'gate')) + OP('⊙') + H + SUB(MV('W'),'up'))}${SUB(MV('W'),'down')}`
+    : `${X}${OP('←')}${X}${OP('+')}<span class="mf">Attention</span>${PA('LN' + PA(X))}${OP('+')}GELU${PA('LN' + PA(X) + SUB(MV('W'),'1'))}${SUB(MV('W'),'2')}`;
+  $('#layerSay').innerHTML = big
+    ? `แต่ละแท่งคือความแรงของสัญญาณ ‖x‖ หลังผ่านแต่ละชั้น (ทั้งหมด ${t.norms.length} ชั้น) · RMSNorm ปรับขนาดสัญญาณให้คงที่ แล้ว SwiGLU (SiLU คูณกันสองทาง) ทำหน้าที่ “คิดต่อ” ในแต่ละชั้น`
+    : 'แต่ละแท่งคือความแรงของสัญญาณ ‖x‖ หลังผ่านแต่ละชั้น ทุกชั้นเพิ่ม “ความเข้าใจ” ลงไปในเวกเตอร์เดิม';
   $('#layerNote').textContent = `${t.norms.length} ชั้น`;
 
   // ③ softmax
   const top = t.top, tm = top[0][1];
-  $('#smNote').textContent = `จาก ${t.vocab} ตัวอักษรที่รู้จัก · T = ${t.T}`;
+  $('#smNote').textContent = `จาก ${fmtNum(t.vocab)} ${UNIT()}ที่รู้จัก · T = ${t.T}` + (big ? ` · top-p ${live.info.top_p} · ลดคำซ้ำ ÷${live.info.rep}` : '');
   const inTop = top.some(([c]) => c === t.ch);
   $('#bars').innerHTML = top.map(([c, p, z]) => `<div class="row ${c === t.ch ? 'pick' : ''}"><span class="c">${esc(showCh(c))}</span>
       <span class="t"><i style="width:${p/tm*100}%"></i></span><span class="n">z=${z.toFixed(2)} · ${pct(p)}</span></div>`).join('')
@@ -693,7 +751,8 @@ async function loadState(){
   try{ S = await (await fetch('/api/state')).json(); }catch{ return; }
   render();
   clearTimeout(pollTimer);
-  pollTimer = setTimeout(loadState, S.train.running ? 2000 : 6000);
+  const bigBusy = S.big.models.some(m => m.dl.state === 'downloading') || S.big.load.state === 'loading';
+  pollTimer = setTimeout(loadState, bigBusy ? 1200 : S.train.running ? 2000 : 6000);
 }
 
 function render(){
@@ -717,7 +776,7 @@ function render(){
     $('#sK').value = st.top_k; $('#vK').textContent = st.top_k;
     $('#sD').value = st.delay; $('#vD').textContent = st.delay;
   }
-  renderTrain(); renderFormulas(); renderData();
+  renderTrain(); renderFormulas(); renderData(); renderBrain();
   $('#tlList').innerHTML = S.events.map(e => `<div class="ev ${e.kind}"><div>${esc(e.title)}</div><div class="meta">${when(e.ts)}</div></div>`).join('');
 }
 
@@ -982,6 +1041,53 @@ $('#xfile').onchange = async e => {
   e.target.value = ''; loadState();
 };
 
+/* ---------- brain picker ---------- */
+const gb = b => (b / 1e9).toFixed(b > 1e10 ? 0 : 1) + ' GB';
+function renderBrain(){
+  const G = S.big, mode = S.settings.brain, L = G.loaded, ld = G.load;
+  $('#brainBtn').innerHTML = mode === 'big'
+    ? (L ? `🎓 <b>${esc(L.label)}</b>` : ld.state === 'loading' ? `⏳ กำลังโหลดสมอง ${Math.round(ld.progress*100)}%` : '🎓 <b>สมองโต</b> (ยังไม่โหลด)')
+    : '🌱 <b>แซนด์ทารก</b>';
+  if($('#bmodal').classList.contains('hidden')) return;
+  const ram = G.ram_gb ? `เครื่องนี้มี RAM ${G.ram_gb.toFixed(0)} GB` : '';
+  $('#bList').innerHTML = `
+    <div class="bopt ${mode === 'baby' ? 'on' : ''}"><h5>🌱 แซนด์ทารก (สมองที่ฝึกเองจากศูนย์)
+      ${mode === 'baby' ? '<span class="tag bi">ใช้อยู่</span>' : '<button class="btn sm" data-baby>ใช้สมองนี้</button>'}</h5>
+      <div class="muted">${fmtNum(S.train.params)} น้ำหนัก · ฝึกไปแล้ว ${fmtNum(S.train.step)} ก้าว · เรียนรู้จากข้อมูลของคุณจริงๆ แต่ยังพูดได้แค่เรื่องง่ายๆ</div></div>
+    <h3>🎓 สมองโต (โมเดลเปิด + เครื่องยนต์ของเรา) <span class="muted" style="font-weight:400">${ram}</span></h3>`
+    + G.models.map(m => {
+      const using = mode === 'big' && L && L.key === m.key, d = m.dl;
+      const loading = ld.state === 'loading' && ld.key === m.key;
+      let act = '';
+      if(using) act = '<span class="tag bi">ใช้อยู่</span>';
+      else if(loading) act = `<span class="muted">กำลังโหลด ${Math.round(ld.progress*100)}%</span>`;
+      else if(m.downloaded) act = `<button class="btn sm primary" data-load="${m.key}">ใช้สมองนี้</button>`;
+      else if(d.state === 'downloading') act = `<button class="btn sm" data-stop="${m.key}">หยุดชั่วคราว</button>`;
+      else act = `<button class="btn sm" data-dl="${m.key}">⬇ ดาวน์โหลด ~${m.size_gb} GB</button>`;
+      const pr = d.state === 'downloading' && d.total ? `<div class="prog"><i style="width:${d.done/d.total*100}%"></i></div>
+        <div class="muted">${gb(d.done)} / ${gb(d.total)} · ${esc(d.file)}</div>` : loading ? `<div class="prog"><i style="width:${ld.progress*100}%"></i></div>` : '';
+      return `<div class="bopt ${using ? 'on' : ''}"><h5>${esc(m.label)} <span>${act}</span></h5>
+        <div class="muted">${m.params} น้ำหนัก · ${esc(m.desc)}${m.think ? ' · 💭 คิดก่อนตอบได้' : ''}</div>${pr}
+        ${!m.fits ? `<div class="warn">⚠ แนะนำ RAM ${m.ram_gb} GB ขึ้นไป${m.quant8 ? ' — จะบีบเป็น int8 ให้พอดีเครื่อง แต่จะช้าและเครื่องอาจหน่วง' : ''}</div>` : ''}
+        ${d.state === 'error' ? `<div class="warn">${esc(d.error)}</div>` : ''}
+        ${loading || ld.state !== 'error' || ld.key !== m.key ? '' : `<div class="warn">โหลดไม่สำเร็จ: ${esc(ld.error)}</div>`}</div>`;
+    }).join('');
+  $('#bThink').checked = S.settings.think;
+  if(document.activeElement !== $('#bMax')) $('#bMax').value = S.settings.max_tokens;
+  $$('#bList [data-dl]').forEach(b => b.onclick = async () => { await post('/api/big/download', {model: b.dataset.dl}); loadState(); });
+  $$('#bList [data-stop]').forEach(b => b.onclick = async () => { await post('/api/big/stop', {model: b.dataset.stop}); loadState(); });
+  $$('#bList [data-load]').forEach(b => b.onclick = async () => {
+    b.disabled = true; await post('/api/big/load', {model: b.dataset.load}); loadState(); });
+  $$('#bList [data-baby]').forEach(b => b.onclick = async () => {
+    if(S.big.loaded && !confirm('ปิดสมองโตเพื่อคืนหน่วยความจำ แล้วกลับไปใช้แซนด์ทารก?')) return;
+    await post('/api/big/unload'); loadState(); });
+}
+$('#brainBtn').onclick = () => { $('#bmodal').classList.remove('hidden'); renderBrain(); };
+$('#bClose').onclick = () => $('#bmodal').classList.add('hidden');
+$('#bmodal').onclick = e => { if(e.target.id === 'bmodal') $('#bmodal').classList.add('hidden'); };
+$('#bThink').onchange = e => post('/api/settings', {think: e.target.checked ? 1 : 0});
+$('#bMax').onchange = e => post('/api/settings', {max_tokens: +e.target.value});
+
 /* ---------- sand orb ---------- */
 const oc = $('#orb'), ox = oc.getContext('2d');
 let grains = [], orbTarget = 60, orbThinking = false;
@@ -1017,7 +1123,8 @@ addEventListener('resize', () => { drawLoss(); drawSparks(); renderSummary(); })
       สมองของแซนด์สร้างขึ้นเองทั้งหมดและเริ่มจากศูนย์ ตอนแรกจะพูดมั่วๆ<br>
       กด <b style="display:inline;font-size:inherit">▶ ฝึก</b> ด้านบน แล้วดูแซนด์ค่อยๆ เรียนภาษาที่แท็บ 📈 การฝึก<br>
       ระหว่างนั้นลองคุยได้เลย แท็บ 🧠 สมองสดจะแสดงทุกสูตรตอนแซนด์คิด<br>
-      ลองถาม “สวัสดี”, “3 + 4 เท่ากับเท่าไร”, “คำตรงข้ามของ ร้อน”</div>`;
+      ลองถาม “สวัสดี”, “3 + 4 เท่ากับเท่าไร”, “คำตรงข้ามของ ร้อน”<br><br>
+      อยากให้แซนด์ฉลาดขึ้นทันที กดปุ่ม <b style="display:inline;font-size:inherit">🧠 เลือกสมอง</b> มุมขวาบน แล้วเลือกสมองโต</div>`;
   }
   h.forEach(m => addMsg(m));
 })();

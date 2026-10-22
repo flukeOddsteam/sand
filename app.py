@@ -19,6 +19,7 @@ from html import escape as html_escape
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from urllib.parse import parse_qs, urlparse
 
+import bigbrain as B
 import formulas as F
 import seed_data
 from brain import SAND_TAG, USER_TAG, think_step
@@ -34,6 +35,7 @@ DB_PATH = os.path.join(BASE, "sand.db")
 BRAIN_PATH = os.path.join(BASE, "sand_brain.pt")
 PORT = int(os.environ.get("SAND_PORT", "7777"))
 MAX_REPLY = 200
+MODELS_DIR = os.path.join(BASE, "models")
 SCHEMA = "2"
 
 # ---------------------------------------------------------------- สูตร
@@ -485,6 +487,9 @@ def gen_settings():
         "top_k": int(float(setting("top_k", "20"))),
         "delay": int(float(setting("delay", "40"))),
         "auto_train": setting("auto_train", "1") == "1",
+        "think": setting("think", "1") == "1",
+        "max_tokens": int(float(setting("max_tokens", "1024"))),
+        "brain": setting("brain", "baby"),
     }
 
 
@@ -497,7 +502,234 @@ def build_prompt(ctx):
     return text[-(ctx - 1):]
 
 
+# ---------------------------------------------------------------- สมองโต (โมเดลเปิด + เครื่องยนต์ของเราเอง)
+class BigBrain:
+    def __init__(self):
+        self.model = self.tok = self.key = None
+        self.lock = threading.Lock()
+        self.dl = {k: {"state": "idle", "done": 0, "total": 0, "file": "", "error": None} for k in B.MODELS}
+        self.stops = {}
+        self.load_state = {"state": "idle", "progress": 0.0, "error": None, "key": None}
+
+    def ready(self):
+        return self.model is not None
+
+    def status(self):
+        ram = B.system_ram_gb()
+        out = []
+        for k, m in B.MODELS.items():
+            out.append({**m, "key": k, "downloaded": B.is_downloaded(MODELS_DIR, k), "dl": self.dl[k],
+                        "fits": ram is None or ram + 0.5 >= m["ram_gb"],
+                        "quant8": k == "typhoon-4b" and ram is not None and ram + 0.5 < m["ram_gb"]})
+        info = None
+        if self.model:
+            mm = self.model
+            info = {"key": self.key, "label": B.MODELS[self.key]["label"], "params": mm.n_params, "layers": mm.L,
+                    "heads": mm.H, "kv": mm.KV, "d": mm.d, "hd": mm.hd, "device": mm.device,
+                    "dtype": str(mm.dtype).replace("torch.", ""), "quant8": mm.quant8}
+        return {"models": out, "loaded": info, "load": self.load_state, "ram_gb": ram}
+
+    def download(self, key):
+        if key not in B.MODELS or self.dl[key]["state"] == "downloading":
+            return
+        stop = threading.Event()
+        self.stops[key] = stop
+
+        def job():
+            try:
+                if B.download(MODELS_DIR, key, self.dl[key], stop):
+                    event("brain", f"ดาวน์โหลดสมอง {B.MODELS[key]['label']} เสร็จแล้ว")
+            except Exception as e:
+                self.dl[key].update(state="error", error=f"{type(e).__name__}: {e} — ตรวจการเชื่อมต่ออินเทอร์เน็ตแล้วกดดาวน์โหลดต่อ")
+        threading.Thread(target=job, daemon=True).start()
+
+    def stop_download(self, key):
+        if key in self.stops:
+            self.stops[key].set()
+
+    def load(self, key):
+        if key not in B.MODELS or not B.is_downloaded(MODELS_DIR, key) or self.load_state["state"] == "loading":
+            return
+        self.load_state = {"state": "loading", "progress": 0.0, "error": None, "key": key}
+
+        def job():
+            try:
+                if trainer.running:
+                    trainer.stop()              # หยุดฝึกแซนด์ทารก เพื่อให้แรมพอสำหรับสมองโต
+                    set_setting("auto_train", "0")
+                self.unload()
+                ram = B.system_ram_gb()
+                q8 = key == "typhoon-4b" and ram is not None and ram + 0.5 < B.MODELS[key]["ram_gb"]
+                model = B.Qwen3(B.model_dir(MODELS_DIR, key), quant8=q8,
+                                progress=lambda f: self.load_state.update(progress=f))
+                tok = B.TokenizerWrap(B.model_dir(MODELS_DIR, key))
+                with self.lock:
+                    self.model, self.tok, self.key = model, tok, key
+                set_setting("big_model", key)
+                set_setting("brain", "big")
+                self.load_state.update(state="ready", progress=1.0)
+                event("brain", f"แซนด์ได้สมองโต: {B.MODELS[key]['label']} ({model.n_params / 1e9:.1f} พันล้านน้ำหนัก)")
+            except Exception as e:
+                import traceback
+                traceback.print_exc()
+                self.load_state.update(state="error", error=f"{type(e).__name__}: {e}")
+        threading.Thread(target=job, daemon=True).start()
+
+    def unload(self):
+        with self.lock:
+            self.model = self.tok = self.key = None
+        import gc
+        gc.collect()
+        try:
+            import torch
+            if torch.backends.mps.is_available():
+                torch.mps.empty_cache()
+        except Exception:
+            pass
+
+
+BIG = BigBrain()
+
+SYS_BASE = (
+    "คุณคือ \"แซนด์\" (Sand) ผู้ช่วย AI ที่ทำงานบนคอมพิวเตอร์ของผู้ใช้แบบออฟไลน์ทั้งหมด "
+    "เครื่องยนต์คิดของคุณเขียนขึ้นเองโดยผู้ใช้ "
+    "ตอบเป็นภาษาเดียวกับที่ผู้ใช้ถาม (ส่วนใหญ่เป็นภาษาไทย) ใช้คำลงท้ายว่า ครับ "
+    "ตอบให้ถูกต้อง ชัดเจน และเป็นประโยชน์ อธิบายเหตุผลเป็นขั้นตอนเมื่อเป็นเรื่องซับซ้อน "
+    "ถ้าไม่แน่ใจให้บอกตรงๆ ห้ามแต่งข้อมูลขึ้นเอง"
+)
+
+_CHUNKS = {"key": None, "chunks": []}
+
+
+def _grams(s):
+    s = re.sub(r"\s+", " ", s.lower())
+    return {s[i:i + 3] for i in range(len(s) - 2)}
+
+
+def retrieve(question, k=2):
+    """ค้นข้อความที่ผู้ใช้ป้อนไว้ ส่วนที่เกี่ยวกับคำถามที่สุด (เทียบตัวอักษร 3 ตัวที่ซ้ำกัน)"""
+    key = q("SELECT COUNT(*) n, MAX(id) m FROM texts")[0]
+    key = (key["n"], key["m"])
+    if _CHUNKS["key"] != key:
+        chunks = []
+        for t in q("SELECT title,content FROM texts"):
+            c = t["content"]
+            for i in range(0, max(1, len(c)), 450):
+                piece = c[i:i + 600]
+                if len(piece.strip()) > 40:
+                    chunks.append((t["title"], piece, _grams(piece)))
+        _CHUNKS.update(key=key, chunks=chunks)
+    qg = _grams(question)
+    if len(qg) < 3:
+        return []
+    scored = sorted(((len(qg & g) / math.sqrt(len(g) + 1), title, piece) for title, piece, g in _CHUNKS["chunks"]),
+                    reverse=True)[:k]
+    return [(title, piece) for sc, title, piece in scored if sc > 0.35]
+
+
+def build_big_prompt(user_text, think_on, tk, budget=3000):
+    sys_txt = SYS_BASE
+    taught = q("SELECT q,a FROM taught ORDER BY id DESC LIMIT 60")[::-1]
+    if taught:
+        sys_txt += "\n\nสิ่งที่ผู้ใช้สอนคุณไว้ (เชื่อถือได้ ใช้ตอบได้เลย):\n" + "\n".join(f"- ถาม: {t['q']} → ตอบ: {t['a']}" for t in taught)
+    found = retrieve(user_text)
+    if found:
+        sys_txt += "\n\nข้อความที่ผู้ใช้เคยให้อ่าน ส่วนที่อาจเกี่ยวข้อง:\n" + "\n---\n".join(f"[{t}] {p}" for t, p in found)
+    hist = q("SELECT role,content FROM messages ORDER BY id DESC LIMIT 9")[::-1]
+    head = f"<|im_start|>system\n{sys_txt}<|im_end|>\n"
+    turns = [f"<|im_start|>{'user' if m['role'] == 'user' else 'assistant'}\n{m['content']}<|im_end|>\n" for m in hist]
+    tail = "<|im_start|>assistant\n" + ("" if think_on else "<think>\n\n</think>\n\n")
+    while len(turns) > 1 and len(tk.encode(head + "".join(turns) + tail)) > budget:
+        turns.pop(0)
+    return head + "".join(turns) + tail, [t for t, _ in found], len(taught)
+
+
+def _stream_big(user_text, write):
+    gs = gen_settings()
+    x("INSERT INTO messages(role,content,ts) VALUES('user',?,?)", (user_text, time.time()))
+    with BIG.lock:
+        m, tk, key = BIG.model, BIG.tok, BIG.key
+    meta = B.MODELS[key]
+    think_on = meta["think"] and gs["think"]
+    prompt, found, n_taught = build_big_prompt(user_text, think_on, tk)
+    ids = tk.encode(prompt)
+    T, top_k, top_p, rp = gs["temperature"], gs["top_k"], 0.95, 1.05
+    info = {"mode": "big", "size_label": meta["label"], "label": meta["label"], "params": m.n_params,
+            "device": m.device, "layers": m.L, "heads": m.H, "kv": m.KV, "d": m.d, "hd": m.hd,
+            "step": trainer.step, "T": T, "top_k": top_k, "top_p": top_p, "rep": rp, "think": think_on,
+            "prompt_tokens": len(ids), "prompt_chars": len(ids), "taught": n_taught, "retrieved": found,
+            "quant8": m.quant8, "vocab": tk.vocab}
+    write({"start": info, "prompt": prompt[-4000:]})
+    stops = {i for i in (tk.id("<|im_end|>"), tk.id("<|endoftext|>")) if i is not None}
+    t_s, t_e = tk.id("<think>"), tk.id("</think>")
+    cache = m.new_cache()
+    t0 = time.time()
+    with BIG.lock:
+        logits, tr = m.forward(ids, 0, cache, trace=True)
+    seq, gen, tokens = list(ids), [], []
+    phase = "answer"
+    buf = {"think": [], "answer": []}
+    shown = {"think": "", "answer": ""}
+    for _ in range(max(16, gs["max_tokens"])):
+        nxt, st = B.sample_step(logits, tr, tk, T, top_k, top_p, rp, gen, ctx_ids=seq)
+        gen.append(nxt)
+        st["phase"] = phase
+        if nxt in stops:
+            st["stop"] = True
+            tokens.append(st)
+            write({"tok": st})
+            break
+        if nxt == t_s:
+            phase = st["phase"] = "think"
+            st["marker"], st["ch"] = "think_start", ""
+        elif nxt == t_e:
+            st["marker"], st["ch"] = "think_end", ""
+            phase = "answer"
+        else:
+            buf[phase].append(nxt)
+            full = tk.decode(buf[phase])
+            if full.endswith("\ufffd"):
+                st["ch"] = ""                       # รอไบต์ที่เหลือของตัวอักษรนี้
+            else:
+                st["ch"] = full[len(shown[phase]):]
+                shown[phase] = full
+        tokens.append(st)
+        write({"tok": st})
+        seq.append(nxt)
+        with BIG.lock:
+            logits, tr = m.forward([nxt], len(seq) - 1, cache, trace=True)
+        if gs["delay"]:
+            time.sleep(gs["delay"] / 1000)
+    secs = time.time() - t0
+    answer = shown["answer"].strip() or "…"
+    ps = [t["p"] for t in tokens]
+    summary = {"chars": len(answer), "tokens": len(tokens), "secs": round(secs, 2),
+               "avg_p": sum(ps) / len(ps) if ps else 0,
+               "ppl": math.exp(-sum(math.log(max(p, 1e-12)) for p in ps) / len(ps)) if ps else 0,
+               "avg_H": sum(t["H"] for t in tokens) / len(tokens) if tokens else 0,
+               "think_tokens": len(buf["think"])}
+    aid = x("INSERT INTO messages(role,content,ts) VALUES('assistant',?,?)", (answer, time.time()))
+    x("INSERT OR REPLACE INTO traces(msg_id,data) VALUES(?,?)",
+      (aid, json.dumps({"info": info, "prompt": prompt[-4000:], "tokens": tokens[:1500],
+                        "thinking": shown["think"], "summary": summary}, ensure_ascii=False)))
+    write({"done": True, "id": aid, "summary": summary})
+    record_growth()
+
+
 def stream_chat(user_text, write):
+    if gen_settings()["brain"] == "big":
+        if not BIG.ready():
+            st = BIG.load_state["state"]
+            write({"error": "สมองโตกำลังโหลดอยู่ รอสักครู่แล้วถามใหม่" if st == "loading"
+                   else "ยังไม่ได้โหลดสมองโต — กดปุ่มสมองที่มุมขวาบนเพื่อเลือก หรือสลับกลับไปใช้แซนด์ทารก"})
+            return
+        try:
+            _stream_big(user_text, write)
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            write({"error": f"{type(e).__name__}: {e}"})
+        return
     trainer.waiting += 1
     try:
         _stream_chat(user_text, write)
@@ -584,6 +816,7 @@ def state():
         "events": q("SELECT kind,title,ts FROM events ORDER BY id DESC LIMIT 150"),
         "born": born[0]["ts"] if born else time.time(),
         "chats": v["chats"],
+        "big": BIG.status(),
     }
 
 
@@ -703,8 +936,29 @@ class Handler(BaseHTTPRequestHandler):
             if was:
                 trainer.start()
             ok()
+        elif p == "/api/brain":
+            mode = d.get("mode")
+            if mode in ("baby", "big"):
+                set_setting("brain", mode)
+            ok()
+        elif p == "/api/big/download":
+            BIG.download(d.get("model"))
+            ok()
+        elif p == "/api/big/stop":
+            BIG.stop_download(d.get("model"))
+            ok()
+        elif p == "/api/big/load":
+            BIG.load(d.get("model"))
+            ok()
+        elif p == "/api/big/unload":
+            BIG.unload()
+            set_setting("brain", "baby")
+            BIG.load_state = {"state": "idle", "progress": 0.0, "error": None, "key": None}
+            ok()
         elif p == "/api/settings":
-            for k, lo, hi in (("temperature", 0.05, 3), ("top_k", 1, 200), ("delay", 0, 1000)):
+            if "think" in d:
+                set_setting("think", "1" if d["think"] else "0")
+            for k, lo, hi in (("temperature", 0.05, 3), ("top_k", 1, 200), ("delay", 0, 1000), ("max_tokens", 16, 4096)):
                 if k in d:
                     try:
                         set_setting(k, max(lo, min(hi, float(d[k]))))
@@ -740,7 +994,12 @@ def main():
     print(f"  สมองขนาด{s['size_label']} {s['params']:,} น้ำหนัก · ฝึกด้วย {dev} · ฝึกไปแล้ว {s['step']:,} ก้าว")
     print("  กด Ctrl+C เพื่อปิด (สมองจะถูกบันทึกอัตโนมัติ)")
     print("=" * 56)
-    if gen_settings()["auto_train"]:
+    gs = gen_settings()
+    bm = setting("big_model")
+    if gs["brain"] == "big" and bm in B.MODELS and B.is_downloaded(MODELS_DIR, bm):
+        print(f"  กำลังโหลดสมองโต {B.MODELS[bm]['label']} …")
+        BIG.load(bm)
+    elif gs["auto_train"]:
         trainer.start()
     srv = ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
     if not os.environ.get("SAND_NO_BROWSER"):

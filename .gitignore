@@ -10,3 +10,6 @@ sand.db
 sand.db-journal
 
 .DS_Store
+
+# น้ำหนักโมเดลเปิดที่ดาวน์โหลดมา (หลาย GB)
+models/
