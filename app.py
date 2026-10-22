@@ -1234,6 +1234,17 @@ class Handler(BaseHTTPRequestHandler):
 
 def main():
     global trainer
+    try:
+        srv = ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
+    except OSError as e:
+        if e.errno in (48, 98):                    # ช่องถูกใช้อยู่ (macOS / Linux)
+            print("=" * 56)
+            print(f"  แซนด์เปิดอยู่แล้ว หรือมีโปรแกรมอื่นใช้ช่อง {PORT} อยู่")
+            print(f"  · ถ้าแซนด์เปิดอยู่แล้ว เข้าได้ที่ http://127.0.0.1:{PORT}")
+            print(f"  · ถ้าอยากปิดตัวเก่าแล้วเปิดใหม่ รัน:  lsof -ti :{PORT} | xargs kill")
+            print("=" * 56)
+            sys.exit(1)
+        raise
     init_db()
     trainer = Trainer(BRAIN_PATH, get_corpus, get_lr, record_growth)
     s = trainer.snapshot()
@@ -1253,7 +1264,6 @@ def main():
     elif gs["auto_train"]:
         trainer.start()
     threading.Thread(target=reader_loop, daemon=True).start()
-    srv = ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
     if not os.environ.get("SAND_NO_BROWSER"):
         threading.Timer(1.0, lambda: webbrowser.open(url)).start()
     try:
