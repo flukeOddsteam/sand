@@ -126,6 +126,14 @@ def build(seed=7):
         out += [pair(f"คำตรงข้ามของ {a}", b), pair(f"คำตรงข้ามของ {b}", a)] * 2
     for en, th in WORDS:
         out += [pair(f"{en} แปลว่าอะไร", th), pair(f"{th} ภาษาอังกฤษคือ", en)] * 2
+    # บทสนทนาหลายภาษา + คำผิดที่พบบ่อย (data/5-…) อ่านซ้ำ 2 รอบ
+    import os
+    import re
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "5-หลายภาษาและคำผิด.txt")
+    if os.path.exists(path):
+        with open(path, encoding="utf-8") as f:
+            blocks = [b.strip() + "\n" for b in re.split(r"\n\s*\n", f.read()) if b.strip()]
+        out += blocks * 2
     rnd.shuffle(out)
     return "\n".join(out)
 

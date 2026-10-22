@@ -25,6 +25,7 @@ from urllib.parse import parse_qs, urlparse
 import bigbrain as B
 import web as WEB
 import formulas as F
+import typos as TY
 import seed_data
 from brain import SAND_TAG, USER_TAG, think_step
 from trainer import Trainer
@@ -65,6 +66,12 @@ BUILTIN_FORMULAS = [
     ("w_text", "น้ำหนัก: ข้อความที่ป้อน", "1", "เท่า", "ข้อความยาวที่ป้อนให้อ่าน จะถูกอ่านซ้ำกี่เท่า", "train"),
     ("w_web", "น้ำหนัก: บทความที่อ่านเองจากอินเทอร์เน็ต", "1", "เท่า",
      "บทความที่แซนด์ออกไปอ่านเองหรือค้นตอนตอบ จะถูกอ่านซ้ำกี่เท่าตอนฝึก", "train"),
+    ("w_convo", "น้ำหนัก: บทสนทนาของมนุษย์ (หลายภาษา)", "2", "เท่า",
+     "บทสนทนาจริงจากคนหลายภาษาที่แซนด์ไปเรียนมา จะถูกอ่านซ้ำกี่เท่า", "train"),
+    ("p_typo", "สัดส่วนบทสนทนาที่ทำสำเนาพิมพ์ผิด", "clamp(0.3 + 0.1 * floor(steps / 20000), 0, 0.6)", "",
+     "ทุกคู่ถาม-ตอบ มีโอกาสเท่านี้ที่จะถูกทำสำเนาแบบฝั่งผู้ใช้พิมพ์ผิด (คำตอบยังถูก) "
+     "ให้แซนด์เรียนว่าคำผิดแปลว่าอะไร · ยิ่งฝึกนาน ยิ่งเจอคำผิดมากขึ้น", "train"),
+    ("w_typo", "น้ำหนัก: สำเนาพิมพ์ผิด", "1", "เท่า", "สำเนาพิมพ์ผิดแต่ละชุด จะถูกอ่านกี่เท่า", "train"),
 ]
 
 VAR_LABELS = {
@@ -83,6 +90,8 @@ VAR_LABELS = {
     "days": "อายุของแซนด์ (วัน)",
     "web_n": "จำนวนบทความที่อ่านจากอินเทอร์เน็ต",
     "web_k": "ข้อความจากอินเทอร์เน็ต (พันตัวอักษร)",
+    "convo_n": "จำนวนบทสนทนาของมนุษย์ที่เรียนมา",
+    "langs": "จำนวนภาษาที่เคยเรียนบทสนทนา",
 }
 
 lock = threading.Lock()
@@ -145,6 +154,8 @@ def init_db():
     CREATE TABLE IF NOT EXISTS traces(msg_id INTEGER PRIMARY KEY, data TEXT);
     CREATE TABLE IF NOT EXISTS web_pages(id INTEGER PRIMARY KEY, title TEXT, url TEXT UNIQUE, content TEXT,
         ts REAL, source TEXT, lang TEXT);
+    CREATE TABLE IF NOT EXISTS convos(id INTEGER PRIMARY KEY, lang TEXT, q TEXT, a TEXT, source TEXT, ts REAL,
+        UNIQUE(q, a));
     """)
     old = c.execute("SELECT value FROM settings WHERE key='schema'").fetchone()
     if not old or old[0] != SCHEMA:
@@ -188,6 +199,8 @@ def base_vars():
         "days": (time.time() - t.born) / 86400,
         "web_n": count("SELECT COUNT(*) n FROM web_pages"),
         "web_k": (q("SELECT SUM(LENGTH(content)) n FROM web_pages")[0]["n"] or 0) / 1000,
+        "convo_n": count("SELECT COUNT(*) n FROM convos"),
+        "langs": count("SELECT COUNT(DISTINCT lang) n FROM convos"),
     }
 
 
@@ -442,13 +455,44 @@ def get_corpus():
         if total > 15_000_000:                 # จำกัดขนาด: ใช้บทความล่าสุดไม่เกิน 15 ล้านตัวอักษร
             break
         webs.append(r["title"] + "\n" + r["content"])
+    convos = [pair(r["q"], r["a"]) for r in q("SELECT q,a FROM convos ORDER BY id DESC LIMIT 40000")]
     # ข้อความที่ไม่ได้ใช้ฝึก (validation) ตัดจากท้ายสุด จึงวางบทเรียนตั้งต้นไว้ท้าย
-    unique = "\n".join(webs + texts + liked + taught + [SEED_TEXT])
+    unique = "\n".join(webs + texts + convos + liked + taught + [SEED_TEXT])
     weighted = [(t, w("w_taught", 8) - 1) for t in taught] + \
                [(t, w("w_liked", 4) - 1) for t in liked] + \
                [(t, w("w_text", 1) - 1) for t in texts] + \
+               [(t, w("w_convo", 2) - 1) for t in convos] + \
                [(t, w("w_web", 1) - 1) for t in webs]
+    typo = typo_copies(taught + liked + convos + texts + [SEED_TEXT], max(0.0, min(1.0, res.get("p_typo", 0.3))))
+    weighted += [(t, w("w_typo", 1)) for t in typo]
+    TYPO_INFO.update(n=len(typo), chars=sum(map(len, typo)), examples=typo[:6])
     return weighted, unique
+
+
+TYPO_INFO = {"n": 0, "chars": 0, "examples": []}
+_PAIR_RE = re.compile(re.escape(USER_TAG) + r"(.+)\n" + re.escape(SAND_TAG) + r"(.+)")
+
+
+def typo_copies(blocks, p, limit=12000):
+    """สำเนาพิมพ์ผิด: ฝั่งผู้ใช้พิมพ์ผิดแบบคนจริง (กดตัวข้างๆ ตกตัว สลับตัว วรรณยุกต์ ภาษาพูด) แต่คำตอบยังถูก
+    และบางส่วน (~8%) จำลองลืมเปลี่ยนแป้น → แซนด์ตอบว่าน่าจะหมายถึงอะไร"""
+    import random as _r
+    rnd = _r.Random(int(time.time() // 3600))           # เปลี่ยนแบบคำผิดทุกชั่วโมง
+    out = []
+    for b in blocks:
+        for m in _PAIR_RE.finditer(b):
+            if len(out) >= limit:
+                return out
+            qq, a = m.group(1).strip(), m.group(2).strip()
+            if len(qq) < 3 or rnd.random() >= p:
+                continue
+            if rnd.random() < 0.08 and sum(TY.is_thai(c) for c in qq) > len(qq) * 0.6:
+                out.append(pair(TY.wrong_layout(qq), f"(น่าจะหมายถึง “{qq}”) {a}"))
+            else:
+                bad = TY.noisy(qq, rnd)
+                if bad != qq:
+                    out.append(pair(bad, a))
+    return out
 
 
 def data_summary():
@@ -465,7 +509,12 @@ def data_summary():
             {"name": "ข้อความที่ป้อน", "chars": x_chars, "weight": res.get("w_text")},
             {"name": "อ่านเองจากอินเทอร์เน็ต", "chars": q("SELECT SUM(LENGTH(content)) n FROM web_pages")[0]["n"] or 0,
              "weight": res.get("w_web")},
+            {"name": "บทสนทนาของมนุษย์ (หลายภาษา)", "chars": q("SELECT SUM(LENGTH(q)+LENGTH(a)) n FROM convos")[0]["n"] or 0,
+             "weight": res.get("w_convo")},
+            {"name": "สำเนาพิมพ์ผิด (สร้างอัตโนมัติ)", "chars": TYPO_INFO["chars"], "weight": res.get("w_typo")},
         ],
+        "typo": TYPO_INFO,
+        "convo": convo_state(),
         "taught": q("SELECT id,q,a,ts,source FROM taught ORDER BY id DESC LIMIT 300"),
         "texts": q("SELECT id,title,LENGTH(content) chars,substr(content,1,120) preview,ts FROM texts ORDER BY id DESC"),
         "seed_preview": SEED_TEXT[:600],
@@ -1113,6 +1162,148 @@ def reader_loop():
             say(f"ต่ออินเทอร์เน็ตไม่ได้ ({type(e).__name__}) จะลองใหม่ใน 1 นาที", "⚠️")
 
 
+# ---------------------------------------------------------------- เรียนบทสนทนาของมนุษย์หลายภาษา
+# รหัสภาษา: (ชื่อไทย, รหัสใน Aya = ISO 639-3, รหัสใน OpenAssistant)
+CONVO_LANGS = {
+    "th": ("ไทย", "tha", "th"), "en": ("อังกฤษ", "eng", "en"), "ja": ("ญี่ปุ่น", "jpn", "ja"),
+    "zh": ("จีน", "zho", "zh"), "ko": ("เกาหลี", "kor", "ko"), "vi": ("เวียดนาม", "vie", "vi"),
+    "id": ("อินโดนีเซีย", "ind", "id"), "es": ("สเปน", "spa", "es"), "fr": ("ฝรั่งเศส", "fra", "fr"),
+    "de": ("เยอรมัน", "deu", "de"), "ru": ("รัสเซีย", "rus", "ru"), "pt": ("โปรตุเกส", "por", "pt"),
+}
+CONVO_SOURCES = {
+    "aya": ("Aya (Cohere for AI) · คนจริงกว่า 3,000 คนเขียนคำถาม-คำตอบ 65 ภาษา · Apache-2.0",
+            ["CohereLabs/aya_dataset", "CohereForAI/aya_dataset"]),
+    "oasst": ("OpenAssistant (oasst1) · บทสนทนาที่อาสาสมัครเขียนเอง 35 ภาษา · Apache-2.0", ["OpenAssistant/oasst1"]),
+}
+CONVO_JOB = {"active": False, "stop": False, "done": 0, "goal": 0, "added": 0, "lang": "", "source": "", "error": "",
+             "finished": None}
+
+
+def _trim(t, limit):
+    """ตัดข้อความยาวให้จบที่ประโยค/ช่องว่าง เพราะสมองทารกจำบริบทได้สั้น"""
+    t = re.sub(r"\s+", " ", (t or "")).strip()
+    t = re.sub(r"[*#`_]{1,3}", "", t)
+    if len(t) <= limit:
+        return t
+    cut = t[:limit]
+    for sep in ("。", ". ", "! ", "? ", "！", "？", " "):
+        k = cut.rfind(sep)
+        if k > limit * 0.5:
+            return cut[:k + len(sep)].strip()
+    return cut
+
+
+def _save_convo(lang, qq, a, source):
+    qq, a = _trim(qq, 160), _trim(a, 240)
+    if len(qq) < 2 or len(a) < 2:
+        return 0
+    c = db()
+    try:
+        cur = c.execute("INSERT OR IGNORE INTO convos(lang,q,a,source,ts) VALUES(?,?,?,?,?)",
+                        (lang, qq, a, source, time.time()))
+        c.commit()
+        return cur.rowcount
+    finally:
+        c.close()
+
+
+def _hf_try(names):
+    last = None
+    for name in names:
+        try:
+            sp = WEB.hf_splits(name)
+            if sp:
+                cfg, split = next(((c, s) for c, s in sp if s == "train"), sp[0])
+                return name, cfg, split
+        except Exception as e:
+            last = e
+    raise RuntimeError(f"เปิดชุดข้อมูลไม่ได้ ({last})")
+
+
+def _learn_aya(code, want):
+    name, cfg, split = _hf_try(CONVO_SOURCES["aya"][1])
+    got, off = 0, 0
+    while got < want and not CONVO_JOB["stop"]:
+        rows, total = WEB.hf_filter(name, cfg, split, f"\"language_code\"='{CONVO_LANGS[code][1]}'", off, 100)
+        if not rows:
+            break
+        for r in rows:
+            got += _save_convo(code, r.get("inputs"), r.get("targets"), "aya")
+        off += len(rows)
+        CONVO_JOB["done"] = min(want, got)
+        if off >= total:
+            break
+    return got
+
+
+def _learn_oasst(code, want):
+    name, cfg, split = _hf_try(CONVO_SOURCES["oasst"][1])
+    got, off = 0, 0
+    lc = CONVO_LANGS[code][2]
+    while got < want and not CONVO_JOB["stop"]:
+        rows, total = WEB.hf_filter(name, cfg, split, f"\"lang\"='{lc}' AND \"role\"='assistant' AND \"rank\"=0", off, 100)
+        if not rows:
+            break
+        off += len(rows)
+        ids = [r["parent_id"] for r in rows if re.fullmatch(r"[\w-]{1,64}", r.get("parent_id") or "")]
+        parents = {}
+        for i in range(0, len(ids), 50):
+            chunk = ids[i:i + 50]
+            where = "\"message_id\" IN (" + ",".join(f"'{x_}'" for x_ in chunk) + ")"
+            prs, _ = WEB.hf_filter(name, cfg, split, where, 0, 100)
+            parents.update({p_["message_id"]: p_["text"] for p_ in prs})
+        for r in rows:
+            if r.get("parent_id") in parents:
+                got += _save_convo(code, parents[r["parent_id"]], r.get("text"), "oasst")
+        CONVO_JOB["done"] = min(want, got)
+        if off >= total:
+            break
+    return got
+
+
+def learn_convo_job(langs, source, per_lang):
+    CONVO_JOB.update(active=True, stop=False, done=0, goal=per_lang, added=0, error="", finished=None)
+    srcs = ["aya", "oasst"] if source == "both" else [source]
+    say(f"เริ่มไปเรียนบทสนทนาของมนุษย์ {len(langs)} ภาษา ภาษาละ ~{per_lang} คู่", "🗣️")
+    try:
+        for code in langs:
+            for src in srcs:
+                if CONVO_JOB["stop"]:
+                    break
+                CONVO_JOB.update(lang=code, source=src, done=0, goal=per_lang // len(srcs))
+                name = CONVO_LANGS[code][0]
+                say(f"กำลังอ่านบทสนทนาภาษา{name} จาก {src}…", "🗣️")
+                try:
+                    n = (_learn_aya if src == "aya" else _learn_oasst)(code, per_lang // len(srcs))
+                except Exception as e:
+                    CONVO_JOB["error"] = f"{name}/{src}: {e}"
+                    say(f"ภาษา{name} จาก {src} ไม่สำเร็จ: {e}", "⚠️")
+                    continue
+                CONVO_JOB["added"] += n
+                say(f"ได้บทสนทนาภาษา{name} {n} คู่", "✅")
+                ex = q("SELECT q,a FROM convos WHERE lang=? ORDER BY id DESC LIMIT 1", (code,))
+                if ex:
+                    say(f"ตัวอย่าง — ถาม: {ex[0]['q'][:80]} · ตอบ: {ex[0]['a'][:80]}", "💬")
+        if CONVO_JOB["added"]:
+            event("convo", f"เรียนบทสนทนาของมนุษย์เพิ่ม {CONVO_JOB['added']:,} คู่ "
+                           f"({', '.join(CONVO_LANGS[c][0] for c in langs)})")
+            data_changed()
+    finally:
+        CONVO_JOB.update(active=False, finished=time.time())
+        say(f"เรียนบทสนทนาเสร็จ ได้เพิ่ม {CONVO_JOB['added']:,} คู่ — แซนด์จะฝึกกับบทสนทนาเหล่านี้ในรอบถัดไป", "🗣️")
+
+
+def convo_state():
+    return {
+        "job": {k: v for k, v in CONVO_JOB.items() if k != "stop"},
+        "langs": [{"code": k, "name": v[0], "n": count("SELECT COUNT(*) n FROM convos WHERE lang=?", (k,))}
+                  for k, v in CONVO_LANGS.items()],
+        "sources": {k: v[0] for k, v in CONVO_SOURCES.items()},
+        "total": count("SELECT COUNT(*) n FROM convos"),
+        "recent": q("SELECT id,lang,q,a,source FROM convos ORDER BY id DESC LIMIT 12"),
+    }
+
+
 def web_state():
     return {
         "settings": {**web_settings(), "speed": int(float(setting("read_speed", "60")))}, "reader": READER,
@@ -1124,7 +1315,36 @@ def web_state():
     }
 
 
+def fix_typing(user_text):
+    """เดาว่าผู้ใช้ลืมเปลี่ยนแป้นภาษาหรือไม่ — ให้สมองแซนด์ทารกตัดสินว่าแบบไหน "เป็นภาษา" มากกว่า"""
+    if not re.search(r"[!-~]{3,}", user_text):
+        return user_text, []
+    young = trainer.val_loss is None or trainer.step < 500
+    try:
+        return TY.guess_layout(user_text, lambda s: read_along(s), young=young)
+    except Exception as e:
+        print("[typo]", e)
+        return user_text, []
+
+
+def typo_note(fixes, young):
+    parts = []
+    for f in fixes:
+        s = f"“{f['from']}” → “{f['to']}”"
+        if f.get("loss_before") is not None:
+            s += f" (loss {f['loss_before']:.2f} → {f['loss_after']:.2f})"
+        parts.append(s)
+    how = "ดูจากรูปแบบตัวอักษร เพราะสมองยังเด็ก" if young else "สมองอ่านแบบที่แก้แล้วเข้าใจกว่า"
+    return "⌨️ แซนด์เดาว่าพิมพ์ผิดแป้น: " + ", ".join(parts) + f" · {how}"
+
+
 def stream_chat(user_text, write):
+    fixed, fixes = fix_typing(user_text)
+    if fixes:
+        young = fixes[0].get("loss_before") is None
+        write({"note": typo_note(fixes, young), "fixed": fixed})
+        event("typo", f"เดาคำพิมพ์ผิดแป้น: {fixes[0]['from']} → {fixes[0]['to']}")
+        user_text = fixed
     if gen_settings()["brain"] == "big":
         if not BIG.ready():
             st = BIG.load_state["state"]
@@ -1319,6 +1539,27 @@ class Handler(BaseHTTPRequestHandler):
                 except Exception:
                     alive[0] = False
             stream_chat(text, write)
+        elif p == "/api/learn/convo":
+            if not web_settings()["net"]:
+                return ok("ยังไม่ได้เปิดให้แซนด์ใช้อินเทอร์เน็ต — เปิดสวิตช์ในการ์ดอินเทอร์เน็ตก่อน")
+            if CONVO_JOB["active"]:
+                return ok("กำลังเรียนอยู่แล้ว")
+            langs = [c for c in d.get("langs", []) if c in CONVO_LANGS]
+            src = d.get("source", "aya")
+            if src not in ("aya", "oasst", "both"):
+                src = "aya"
+            if not langs:
+                return ok("เลือกอย่างน้อย 1 ภาษา")
+            per = max(20, min(5000, int(d.get("per_lang", 300))))
+            threading.Thread(target=learn_convo_job, args=(langs, src, per), daemon=True).start()
+            ok()
+        elif p == "/api/learn/convo/stop":
+            CONVO_JOB["stop"] = True
+            ok()
+        elif p == "/api/learn/convo/clear":
+            x("DELETE FROM convos" + (" WHERE lang=?" if d.get("lang") else ""), (d["lang"],) if d.get("lang") else ())
+            data_changed()
+            ok()
         elif p == "/api/rate":
             self.send_json({"rating": rate(int(d.get("id", 0)), int(d.get("value", 0)))})
         elif p == "/api/correct":
@@ -1452,6 +1693,12 @@ class Handler(BaseHTTPRequestHandler):
             self.send_error(404)
 
 
+def on_vocab(new):
+    sample = "".join(new[:12])
+    event("vocab", f"แซนด์รู้จักตัวอักษรใหม่ {len(new)} ตัว เช่น {sample}")
+    say(f"รู้จักตัวอักษรใหม่ {len(new)} ตัว: {sample} — สมองขยายให้รองรับแล้ว", "🔤")
+
+
 def main():
     global trainer
     try:
@@ -1466,7 +1713,7 @@ def main():
             sys.exit(1)
         raise
     init_db()
-    trainer = Trainer(BRAIN_PATH, get_corpus, get_lr, record_growth)
+    trainer = Trainer(BRAIN_PATH, get_corpus, get_lr, record_growth, on_vocab=on_vocab)
     s = trainer.snapshot()
     url = f"http://127.0.0.1:{PORT}"
     dev = {"mps": "GPU ของ Mac (Metal)", "cuda": "การ์ดจอ NVIDIA", "cpu": "CPU"}[trainer.device]

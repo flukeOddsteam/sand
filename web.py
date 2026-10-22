@@ -274,3 +274,24 @@ def web_search(q, n=6, provider="ddg", key=""):
             raise BlockedURL("ยังไม่ได้ใส่ Tavily API key")
         return _tavily(q, n, key)
     return _ddg(q, n)
+
+
+# ================================================================ ชุดข้อมูลบทสนทนาจาก Hugging Face (datasets-server API)
+HF_DS = os.environ.get("SAND_HF_DS", "https://datasets-server.huggingface.co")
+
+
+def _hf(path, **params):
+    url = HF_DS + path + "?" + urllib.parse.urlencode(params)
+    _polite(urllib.parse.urlparse(HF_DS).netloc, gap=1.0)
+    _, body = _http(url, headers={"Accept": "application/json", "User-Agent": UA}, timeout=40)
+    return json.loads(body)
+
+
+def hf_splits(dataset):
+    return [(s["config"], s["split"]) for s in _hf("/splits", dataset=dataset).get("splits", [])]
+
+
+def hf_filter(dataset, config, split, where, offset=0, length=100):
+    """แถวที่ตรงเงื่อนไข (เงื่อนไขแบบ SQL เช่น "language_code"='tha') ครั้งละไม่เกิน 100 แถว"""
+    d = _hf("/filter", dataset=dataset, config=config, split=split, where=where, offset=offset, length=min(100, length))
+    return [r["row"] for r in d.get("rows", [])], d.get("num_rows_total", 0)

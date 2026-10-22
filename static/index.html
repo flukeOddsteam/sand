@@ -240,6 +240,12 @@ details.ref summary{cursor:pointer;font-size:13px;color:var(--sand)}
 .stream span.mark{font-size:11.5px;color:var(--teal);border:1px solid var(--teal);border-radius:6px;padding:0 5px;margin:0 3px}
 .stream span.wait{color:var(--muted);font-size:11px}
 .webnote{font-size:12.5px;color:var(--teal);margin-bottom:6px;line-height:1.6}
+.typonote{font-size:12.5px;color:#e0b25a;margin-bottom:6px;line-height:1.6}
+.langs{display:flex;flex-wrap:wrap;gap:6px 14px;margin:6px 0 10px}
+.langs label{display:flex;align-items:center;gap:5px;font-size:13.5px;cursor:pointer}
+.langs .n{color:var(--muted);font-size:11.5px}
+.cvbar{height:6px;border-radius:4px;background:rgba(255,255,255,.08);overflow:hidden;margin:8px 0}
+.cvbar>i{display:block;height:100%;background:var(--teal);transition:width .4s}
 .webnote a,.srcs a,.wlist a,.wstatus a{color:var(--teal)}
 .srcs{font-size:12px;color:var(--muted);margin-top:6px;line-height:1.6}
 .switch{display:flex;align-items:flex-start;gap:10px;margin:8px 0;font-size:13.5px;cursor:pointer}
@@ -474,6 +480,28 @@ details.ref summary{cursor:pointer;font-size:13px;color:var(--sand)}
       </div>
       <div class="list wlist" id="wList"></div>
 
+      <h3>🗣️ เรียนการพูดคุยแบบมนุษย์ (หลายภาษา)</h3>
+      <div class="card">
+        <div class="say">แซนด์จะไปอ่านบทสนทนาที่<b>คนจริงเขียน</b>จากชุดข้อมูลเปิด แล้วเอามาฝึกสมองให้โต้ตอบเป็นภาษานั้นได้
+          · ตัวอักษรภาษาใหม่ (ญี่ปุ่น จีน เกาหลี …) สมองจะขยายให้รู้จักเอง · ต้องเปิดอินเทอร์เน็ตในการ์ดด้านบนก่อน</div>
+        <div class="langs" id="cvLangs"></div>
+        <div class="wrow">
+          <label>แหล่งบทสนทนา<select id="cvSrc"><option value="aya">Aya — คำถาม-คำตอบจากคนจริง 65 ภาษา</option>
+            <option value="oasst">OpenAssistant — บทสนทนาแบบผู้ช่วย 35 ภาษา</option><option value="both">ทั้งสองแหล่ง</option></select></label>
+          <label>ภาษาละ (คู่)<input type="number" id="cvN" min="20" max="5000" value="300"></label>
+        </div>
+        <div class="abtn"><button class="btn primary" id="cvBtn">ไปเรียน</button><button class="btn hidden" id="cvStop">หยุด</button>
+          <span class="err" id="cvErr"></span></div>
+        <div id="cvStatus" class="say"></div>
+        <details class="ref"><summary>ดูบทสนทนาที่เรียนมาล่าสุด</summary><div id="cvRecent"></div></details>
+        <h4 style="margin:14px 0 4px">⌨️ เดาคำพิมพ์ผิด</h4>
+        <div class="say">ทุกรอบฝึก แซนด์จะทำ “สำเนาพิมพ์ผิด” ของบทสนทนา (กดตัวข้างๆ ตกตัว สลับตัว วรรณยุกต์ผิด ภาษาพูด ลืมเปลี่ยนแป้น)
+          โดยคำตอบยังถูก — สมองจึงเรียนว่าคำผิดแปลว่าอะไร · ตอนคุย ถ้าพิมพ์ลืมเปลี่ยนแป้น เช่น <span class="mono">l;ylfu</span>
+          แซนด์จะเดาว่าคือ “สวัสดี” โดยให้สมองตัวเองตัดสินว่าแบบไหนอ่านแล้วเป็นภาษามากกว่า (loss ต่ำกว่า)
+          · ปรับสัดส่วนได้ที่สูตร <span class="mono">p_typo</span></div>
+        <details class="ref"><summary>ตัวอย่างสำเนาพิมพ์ผิดรอบล่าสุด</summary><pre id="typoEx" style="white-space:pre-wrap;font-size:12.5px;color:var(--muted)"></pre></details>
+      </div>
+
       <h3>แซนด์เรียนจากอะไรบ้าง</h3>
       <div class="card"><table class="srctbl" id="srcTbl"></table>
         <div class="say">น้ำหนัก = อ่านซ้ำกี่เท่า แก้ได้ที่แท็บสูตร · ข้อมูลใหม่ถูกใช้ทันทีในก้าวฝึกถัดไป</div></div>
@@ -677,6 +705,10 @@ async function send(){
               + (st.taught ? ` · ใช้สิ่งที่สอน ${st.taught} เรื่อง` : '') + (st.retrieved.length ? ` · ค้นเจอจาก: ${esc(st.retrieved.join(', '))}` : '')
             : `สมองขนาด${st.size_label} · ${st.layers} ชั้น · ${st.heads} หัว attention · ฝึกมา <b>${fmtNum(st.step)}</b> ก้าว · อ่านบริบท ${st.prompt_chars} ตัวอักษร`;
         }
+        if(d.note){
+          const nt = document.createElement('div'); nt.className = 'typonote'; nt.textContent = d.note; row.body.before(nt);
+          $('#liveStatus').textContent = d.note;
+        }
         if(d.web){
           const w = d.web;
           if(!row.webnote){ row.webnote = document.createElement('div'); row.webnote.className = 'webnote'; row.body.before(row.webnote); }
@@ -861,7 +893,8 @@ async function loadState(){
   render();
   clearTimeout(pollTimer);
   const bigBusy = S.big.models.some(m => m.dl.state === 'downloading') || S.big.load.state === 'loading'
-    || (S.web.settings.net && S.web.settings.learn && $('#data').classList.contains('on'));
+    || (S.web.settings.net && S.web.settings.learn && $('#data').classList.contains('on'))
+    || S.data.convo?.job?.active;
   pollTimer = setTimeout(loadState, bigBusy ? 1200 : S.train.running ? 2000 : 6000);
 }
 
@@ -1128,9 +1161,34 @@ function renderData(){
   $('#textList').innerHTML = D.texts.map(t => `<div class="item"><button class="del" data-xdel="${t.id}" title="ลบ">×</button>
       <b>${esc(t.title)}</b> <span class="meta">${fmtNum(t.chars)} ตัวอักษร</span><div class="meta">${esc(t.preview)}…</div></div>`).join('');
   $('#seedPrev').textContent = D.seed_preview + '\n…';
+  renderConvo(D.convo, D.typo);
   $$('[data-tdel]').forEach(b => b.onclick = async () => { await post('/api/teach/delete', {id:+b.dataset.tdel}); loadState(); });
   $$('[data-xdel]').forEach(b => b.onclick = async () => { if(confirm('ลบข้อความนี้?')){ await post('/api/text/delete', {id:+b.dataset.xdel}); loadState(); } });
 }
+const cvPicked = new Set(['th', 'en']);
+function renderConvo(C, T){
+  if(!C) return;
+  const J = C.job;
+  if(!$('#cvLangs').dataset.built){
+    $('#cvLangs').dataset.built = 1;
+    $('#cvLangs').innerHTML = C.langs.map(l => `<label><input type="checkbox" data-cv="${l.code}" ${cvPicked.has(l.code) ? 'checked' : ''}>${esc(l.name)} <span class="n" data-cvn="${l.code}"></span></label>`).join('');
+    $$('[data-cv]').forEach(b => b.onchange = () => b.checked ? cvPicked.add(b.dataset.cv) : cvPicked.delete(b.dataset.cv));
+  }
+  C.langs.forEach(l => { const e = document.querySelector(`[data-cvn="${l.code}"]`); if(e) e.textContent = l.n ? fmtNum(l.n) : ''; });
+  $('#cvBtn').disabled = J.active; $('#cvStop').classList.toggle('hidden', !J.active);
+  const lname = (C.langs.find(l => l.code === J.lang) || {}).name || '';
+  $('#cvStatus').innerHTML = (J.active
+      ? `กำลังอ่านภาษา<b>${esc(lname)}</b> จาก ${esc(J.source)} · ${fmtNum(J.done)}/${fmtNum(J.goal)} · รวมได้เพิ่ม ${fmtNum(J.added)} คู่<div class="cvbar"><i style="width:${Math.min(100, 100 * J.done / Math.max(1, J.goal))}%"></i></div>`
+      : `เรียนมาแล้วทั้งหมด <b>${fmtNum(C.total)}</b> คู่` + (J.finished ? ` · รอบล่าสุดได้เพิ่ม ${fmtNum(J.added)} คู่` : ''))
+    + (J.error ? `<div class="err">${esc(J.error)}</div>` : '');
+  $('#cvRecent').innerHTML = C.recent.map(r => `<div class="item qa"><span class="tag">${esc(r.lang)}</span> <b>ถาม:</b> ${esc(r.q)}<br><b>ตอบ:</b> ${esc(r.a)}</div>`).join('') || '<p class="muted">ยังไม่มี</p>';
+  if(T) $('#typoEx').textContent = T.n ? `รอบนี้ทำไว้ ${fmtNum(T.n)} ชุด เช่น\n\n` + T.examples.join('\n') : 'ยังไม่ได้สร้าง (จะสร้างตอนเริ่มรอบฝึก)';
+}
+$('#cvBtn').onclick = async () => {
+  const r = await (await post('/api/learn/convo', {langs: [...cvPicked], source: $('#cvSrc').value, per_lang: +$('#cvN').value})).json();
+  $('#cvErr').textContent = r.ok ? '' : r.error; loadState();
+};
+$('#cvStop').onclick = async () => { await post('/api/learn/convo/stop', {}); loadState(); };
 $('#teachBtn').onclick = async () => {
   const r = await (await post('/api/teach', {q: $('#tq').value, a: $('#ta').value})).json();
   $('#teachErr').textContent = r.ok ? '' : r.error;

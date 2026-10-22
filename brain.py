@@ -58,6 +58,14 @@ class Tokenizer:
     def decode(self, ids):
         return "".join(self.itos[i] for i in ids)
 
+    def add_chars(self, chars):
+        """เพิ่มตัวอักษรใหม่ (เช่น ภาษาญี่ปุ่น จีน เกาหลี) ต่อท้าย ไม่กระทบ id เดิม"""
+        new = [c for c in chars if c not in self.stoi]
+        for c in new:
+            self.stoi[c] = len(self.itos)
+            self.itos.append(c)
+        return new
+
 
 # ---------------------------------------------------------------- สมอง
 class Brain(torch.nn.Module):
@@ -84,6 +92,15 @@ class Brain(torch.nn.Module):
             }))
         self.gf, self.bf = ones(d), zeros(d)
         self.register_buffer("mask", torch.tril(torch.ones(ctx, ctx, dtype=torch.bool)), persistent=False)
+
+    def expand_vocab(self, n_new):
+        """ขยายสมองให้รู้จักตัวอักษรใหม่ n_new ตัว: ต่อแถวใหม่ใน E โดยน้ำหนักเดิมไม่เปลี่ยน"""
+        if n_new <= 0:
+            return
+        old = self.E.data
+        extra = torch.randn(n_new, old.shape[1], device=old.device, dtype=old.dtype) * 0.02
+        self.E = torch.nn.Parameter(torch.cat([old, extra], 0))
+        self.cfg["vocab"] += n_new
 
     def n_params(self):
         return sum(p.numel() for p in self.parameters())

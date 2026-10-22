@@ -21,11 +21,14 @@ SAMPLE_PROMPTS = ["สวัสดี", "คุณชื่ออะไร", "3 
 
 
 class Trainer:
-    def __init__(self, path, get_corpus, get_lr, on_progress):
+    MAX_VOCAB = 4000
+
+    def __init__(self, path, get_corpus, get_lr, on_progress, on_vocab=None):
         self.path = path
         self.get_corpus = get_corpus      # () -> [(text, weight), ...] , unique_text
         self.get_lr = get_lr              # (step) -> learning rate (จากสูตร lr)
         self.on_progress = on_progress    # เรียกทุก 100 ก้าว
+        self.on_vocab = on_vocab          # เรียกเมื่อสมองรู้จักตัวอักษรใหม่
         self.device = pick_device()
         self.tok = Tokenizer()
         self.lock = threading.RLock()
@@ -103,8 +106,27 @@ class Trainer:
         self.save()
 
     # ------------------------------------------------------------ ข้อมูล
+    def grow_vocab(self, text, min_count=3):
+        """เจอตัวอักษรที่ไม่รู้จักบ่อยพอ → ขยายสมองให้รู้จัก (ภาษาใหม่)"""
+        from collections import Counter
+        cnt = Counter(c for c in text if c not in self.tok.stoi and c.isprintable() and not c.isspace())
+        room = self.MAX_VOCAB - len(self.tok)
+        new = [c for c, n in cnt.most_common() if n >= min_count][:max(0, room)]
+        if not new:
+            return []
+        self.tok.add_chars(new)
+        self.model.expand_vocab(len(new))
+        self.opt = torch.optim.AdamW(self.model.parameters(), lr=1e-3, betas=(0.9, 0.95), weight_decay=0.05)
+        if self.on_vocab:
+            try:
+                self.on_vocab(new)
+            except Exception as e:
+                print("[on_vocab]", e)
+        return new
+
     def build_data(self):
         weighted, unique = self.get_corpus()
+        self.grow_vocab(unique + "".join(t for t, w in weighted[:2000]))
         ids = self.tok.encode(unique)
         cut = int(len(ids) * 0.95)
         base, val = ids[:cut], ids[cut:]
