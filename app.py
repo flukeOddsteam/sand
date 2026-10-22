@@ -6,9 +6,11 @@
   formulas.py เครื่องคำนวณสูตรการเติบโต (แก้สูตรได้จากในแอป)
 รัน: python app.py แล้วเปิด http://127.0.0.1:7777
 """
+import collections
 import json
 import math
 import os
+import queue
 import re
 import sqlite3
 import sys
@@ -151,6 +153,10 @@ def init_db():
         c.execute("INSERT OR REPLACE INTO settings VALUES('schema',?)", (SCHEMA,))
     c.execute("""CREATE TABLE IF NOT EXISTS formulas(id INTEGER PRIMARY KEY, key TEXT UNIQUE, name TEXT, expr TEXT,
         default_expr TEXT, description TEXT, unit TEXT DEFAULT '', builtin INTEGER DEFAULT 0, kind TEXT DEFAULT 'state', ts REAL)""")
+    cols = [r[1] for r in c.execute("PRAGMA table_info(web_pages)")]
+    for col, typ in (("loss_before", "REAL"), ("loss_after", "REAL"), ("step_read", "INTEGER")):
+        if col not in cols:
+            c.execute(f"ALTER TABLE web_pages ADD COLUMN {col} {typ}")
     if "formulas" not in [r[1] for r in c.execute("PRAGMA table_info(growth)")]:
         c.execute("ALTER TABLE growth ADD COLUMN formulas TEXT")
     for key, name, expr, unit, desc, kind in BUILTIN_FORMULAS:
@@ -771,16 +777,135 @@ def web_settings():
     }
 
 
-def gather_pages(query, ws, want=2, fallback_q=None):
+# ---------------------------------------------------------------- สตรีมสด: ดูแซนด์ออกไปอ่าน
+SUBS, SUBS_LOCK = set(), threading.Lock()
+LOG = collections.deque(maxlen=80)
+READ_SHOW = 3000                       # แสดงการอ่านทีละตัวอักษรแบบสด 3,000 ตัวแรกของแต่ละบทความ
+READING = {"active": False}
+
+
+def emit(ev):
+    ev["ts"] = time.time()
+    if ev.get("type") != "chunk":
+        LOG.append(ev)
+    with SUBS_LOCK:
+        subs = list(SUBS)
+    for qq in subs:
+        try:
+            qq.put_nowait(ev)
+        except queue.Full:
+            pass
+
+
+def say(text, icon="•", **kw):
+    emit({"type": "log", "icon": icon, "text": text, **kw})
+
+
+def read_along(text, show=0, meta=None):
+    """แซนด์ทารกอ่านตามทีละตัวอักษร: ก่อนเห็นตัวถัดไป ให้ทายก่อน แล้วดูว่าทายถูกแค่ไหน
+    p(ตัวจริง) สูง = รู้อยู่แล้ว · ต่ำ = เรื่องใหม่ · loss = −(1/N)Σ ln p"""
+    import torch
+    t = trainer
+    tok = t.tok
+    ids = tok.encode(text)
+    n = len(ids)
+    if n < 3:
+        return None
+    ctx = t.model.cfg["ctx"]
+    stride = ctx // 2
+    p_act = [0.0] * n
+    tops = {}
+    with t.lock:
+        t.model.eval()
+        with torch.no_grad():
+            s, covered = 0, 0
+            while True:
+                e = min(n, s + ctx)
+                x = torch.tensor([ids[s:e]], device=t.device)
+                probs = torch.softmax(t.model(x)[0][0].float(), -1)
+                r0 = max(0, covered - s)
+                tgt = torch.tensor(ids[s + r0 + 1:e], device=t.device)
+                if len(tgt):
+                    rows = probs[r0:e - s - 1]
+                    pr = rows.gather(1, tgt[:, None])[:, 0].cpu().tolist()
+                    for k, pv in enumerate(pr):
+                        p_act[s + r0 + 1 + k] = pv
+                    if s + r0 + 1 < show:
+                        tv, ti = torch.topk(rows, 3, dim=-1)
+                        tv, ti = tv.cpu().tolist(), ti.cpu().tolist()
+                        for k in range(len(pr)):
+                            j = s + r0 + 1 + k
+                            if j < show:
+                                tops[j] = [[tok.itos[ti[k][m]], round(tv[k][m], 4)] for m in range(3)]
+                covered = e - 1
+                if e >= n:
+                    break
+                s += stride
+    p_act[0] = p_act[1] if n > 1 else 0.5
+    loss = sum(-math.log(max(p, 1e-9)) for p in p_act[1:]) / (n - 1)
+    if show and meta is not None:
+        _stream_reading(ids, p_act, tops, show, loss, meta)
+    return loss
+
+
+def _stream_reading(ids, p_act, tops, show, loss, meta):
+    tok = trainer.tok
+    lim = min(show, len(ids))
+    speed = max(10, int(float(setting("read_speed", "60"))))
+    READING.clear()
+    READING.update(active=True, title=meta["title"], url=meta["url"], source=meta["source"],
+                   total=len(ids), limit=lim, chars="", p=[], top=[], done=None)
+    emit({"type": "read_start", "title": meta["title"], "url": meta["url"], "source": meta["source"],
+          "total": len(ids), "limit": lim})
+    step = 12
+    for i in range(0, lim, step):
+        chunk = tok.decode(ids[i:i + step])
+        ps = [round(p, 4) for p in p_act[i:i + step]]
+        tp = [tops.get(j, []) for j in range(i, min(i + step, lim))]
+        READING["chars"] += chunk
+        READING["p"] += ps
+        READING["top"] += tp
+        emit({"type": "chunk", "start": i, "chars": chunk, "p": ps, "top": tp})
+        if SUBS:
+            time.sleep(step / speed)              # อ่านช้าๆ ให้ตามทัน เฉพาะตอนมีคนดูอยู่
+    # ช่วงที่แซนด์ประหลาดใจที่สุด (เรื่องใหม่)
+    text = tok.decode(ids)
+    w = 24
+    sur = [-math.log2(max(p, 1e-9)) for p in p_act]
+    spans, used = [], set()
+    cand = sorted(((sum(sur[i:i + w]) / w, i) for i in range(1, max(2, len(ids) - w), 6)), reverse=True)
+    for sc, i in cand:
+        if any(abs(i - u) < w * 2 for u in used):
+            continue
+        used.add(i)
+        spans.append({"text": text[i:i + w + 16], "bits": round(sc, 2)})
+        if len(spans) >= 4:
+            break
+    val = trainer.val_loss or math.log(len(trainer.tok))
+    ratio = loss / max(val, 1e-6)
+    verdict = ("แซนด์ยังเป็นทารก ทุกอย่างเป็นเรื่องใหม่หมด" if trainer.val_loss is None or trainer.step < 300 else
+               "เรื่องใหม่มากสำหรับแซนด์ ได้เรียนเยอะ" if ratio > 1.6 else
+               "มีหลายส่วนที่แซนด์ยังไม่รู้" if ratio > 1.15 else
+               "คล้ายสิ่งที่แซนด์เคยอ่านมาแล้ว" if ratio > 0.85 else "แซนด์คุ้นเคยกับเนื้อหาแบบนี้ดี")
+    done = {"type": "read_done", "title": meta["title"], "loss": round(loss, 4), "bits": round(loss / math.log(2), 3),
+            "val": round(val, 4), "verdict": verdict, "novel": spans, "chars": len(ids)}
+    READING.update(active=False, done=done)
+    emit(done)
+
+
+def gather_pages(query, ws, want=2, fallback_q=None, who="🎓"):
     """ค้นตามแหล่งที่ตั้งไว้ แล้วเปิดอ่านจนได้ want หน้า คืน (pages, hits, notes)"""
     pages, hits, notes = [], [], []
     if ws["engine"] in ("both", "web"):
         try:
+            say(f"{who} ค้นทั้งเว็บ “{query}” ด้วย {'Tavily' if ws['provider'] == 'tavily' else 'DuckDuckGo'}", "🔎")
             hits = WEB.web_search(query, 8, ws["provider"], setting("tavily_key", ""))
             if not hits and fallback_q:
                 hits = WEB.web_search(fallback_q, 8, ws["provider"], setting("tavily_key", ""))
+            say(f"เจอ {len(hits)} ผลลัพธ์", "📋", items=[{"title": h["title"], "url": h["url"]} for h in hits[:6]])
         except Exception as e:
             notes.append(f"ค้นทั้งเว็บไม่สำเร็จ: {e}")
+            say(f"ค้นทั้งเว็บไม่สำเร็จ: {e}", "⚠️")
         seen_domains = set()
         for h in hits:
             if len(pages) >= want:
@@ -789,15 +914,21 @@ def gather_pages(query, ws, want=2, fallback_q=None):
             if dom in seen_domains:
                 continue
             try:
+                say(f"เช็ก robots.txt แล้วเปิด {dom}", "⬇️", url=h["url"])
                 pg = WEB.fetch_page(h["url"])
                 if len(pg["text"]) >= 300:
                     pg["title"] = pg["title"] or h["title"]
                     pages.append(pg)
                     seen_domains.add(dom)
+                    say(f"ได้เนื้อความ {len(pg['text']):,} ตัวอักษร: {pg['title']}", "📄", url=pg["url"])
+                else:
+                    say(f"ข้าม {dom}: เนื้อความสั้นเกินไป", "⛔")
             except Exception as e:
                 notes.append(f"{dom}: {e}")
+                say(f"ข้าม {dom}: {e}", "⛔")
     if len(pages) < want and ws["engine"] in ("both", "wiki"):
         try:
+            say(f"{who} ค้น Wikipedia “{query}”", "🔎")
             wh = WEB.search(query, ws["lang"], 4) or (WEB.search(fallback_q, ws["lang"], 4) if fallback_q else [])
             for h in wh:
                 if len(pages) >= want:
@@ -805,24 +936,33 @@ def gather_pages(query, ws, want=2, fallback_q=None):
                 pg = WEB.page(h["title"], ws["lang"])
                 if pg and len(pg["text"]) > 100 and pg["url"] not in {p["url"] for p in pages}:
                     pages.append(pg)
+                    say(f"ได้บทความ Wikipedia {len(pg['text']):,} ตัวอักษร: {pg['title']}", "📄", url=pg["url"])
         except Exception as e:
             notes.append(f"Wikipedia: {e}")
+            say(f"Wikipedia: {e}", "⚠️")
     return pages, hits, notes
 
 
-def save_page(pg, source, lang="th"):
+def save_page(pg, source, lang="th", show=0):
     if not pg or len(pg["text"]) < 200:
         return False
     if q("SELECT 1 FROM web_pages WHERE url=?", (pg["url"],)):
         return False
-    x("INSERT INTO web_pages(title,url,content,ts,source,lang) VALUES(?,?,?,?,?,?)",
-      (pg["title"], pg["url"], pg["text"], time.time(), source, lang))
+    try:
+        loss = read_along(pg["title"] + "\n" + pg["text"], show=show,
+                          meta={"title": pg["title"], "url": pg["url"], "source": source})
+    except Exception as e:
+        print("[read_along]", e)
+        loss = None
+    x("INSERT INTO web_pages(title,url,content,ts,source,lang,loss_before,step_read) VALUES(?,?,?,?,?,?,?,?)",
+      (pg["title"], pg["url"], pg["text"], time.time(), source, lang, loss, trainer.step))
     trainer.dirty = True
+    say(f"เก็บ “{pg['title']}” ไว้ในคลังความรู้แล้ว → จะใช้ฝึกในก้าวถัดไป", "💾", url=pg["url"])
     return True
 
 
 def search_before_answer(user_text, m, tk, meta, write):
-    """สมองโต: ถ้าเปิดอินเทอร์เน็ต ให้คิดคำค้น → ค้นวิกิพีเดีย → อ่าน 2 บทความ → จำไว้"""
+    """สมองโต: ถ้าเปิดอินเทอร์เน็ต ให้คิดคำค้น → ค้น → อ่าน 2 หน้า → จำไว้"""
     ws = web_settings()
     forced = user_text.startswith(("ค้น:", "ค้น "))
     if not (ws["net"] and (ws["search"] or forced)):
@@ -835,14 +975,15 @@ def search_before_answer(user_text, m, tk, meta, write):
         return []
     try:
         write({"web": {"stage": "thinking"}})
-        sys_q = "สร้างคำค้นวิกิพีเดียสั้นๆ 1 ถึง 5 คำจากคำถาม ตอบเฉพาะคำค้นเท่านั้น"
+        say(f"🎓 สมองโตได้คำถาม “{user_text[:60]}” กำลังคิดคำค้น", "💭")
+        sys_q = "สร้างคำค้นสั้นๆ 1 ถึง 5 คำจากคำถาม สำหรับค้นในอินเทอร์เน็ต ตอบเฉพาะคำค้นเท่านั้น"
         tail = "<|im_start|>assistant\n" + ("<think>\n\n</think>\n\n" if meta["think"] else "")
         with BIG.lock:
             query = B.quick_text(m, tk, f"<|im_start|>system\n{sys_q}<|im_end|>\n<|im_start|>user\n"
                                          f"{user_text}<|im_end|>\n{tail}", max_new=20)
         query = query.strip(" \"'“”`") or user_text
         write({"web": {"stage": "search", "q": query, "engine": ws["engine"]}})
-        pages, hits, notes = gather_pages(query, ws, 2, fallback_q=user_text)
+        pages, hits, notes = gather_pages(query, ws, 2, fallback_q=user_text, who="🎓")
         for pg in pages:
             save_page(pg, "search", ws["lang"])
         write({"web": {"stage": "read", "q": query, "notes": notes[:3],
@@ -857,47 +998,93 @@ READER = {"state": "idle", "last": None, "error": None, "next": 0}
 
 
 def _read_one(ws):
+    import random
     topics = [t.strip() for t in re.split(r"[,\n]", ws["topics"]) if t.strip()]
     for _ in range(4):
+        pg = None
         if topics:
-            import random
             topic = random.choice(topics)
             READER["state"] = f"ค้นหัวข้อ “{topic}”"
+            say(f"🌱 แซนด์อยากรู้เรื่อง “{topic}” ออกไปหาอ่าน", "🧭")
             have_t = {r["title"] for r in q("SELECT title FROM web_pages")}
             have_u = {r["url"] for r in q("SELECT url FROM web_pages")}
-            pg = None
             if ws["engine"] in ("both", "web") and (ws["engine"] == "web" or random.random() < 0.6):
                 try:
+                    say(f"ค้นทั้งเว็บ “{topic}” ด้วย {'Tavily' if ws['provider'] == 'tavily' else 'DuckDuckGo'}", "🔎")
                     hits = [h for h in WEB.web_search(topic, 10, ws["provider"], setting("tavily_key", ""))
                             if h["url"] not in have_u]
+                    say(f"เจอ {len(hits)} หน้าที่ยังไม่เคยอ่าน", "📋",
+                        items=[{"title": h["title"], "url": h["url"]} for h in hits[:6]])
                     random.shuffle(hits)
                     for h in hits[:3]:
+                        dom = urllib.parse.urlparse(h["url"]).netloc
                         try:
+                            say(f"เช็ก robots.txt แล้วเปิด {dom}", "⬇️", url=h["url"])
                             cand = WEB.fetch_page(h["url"])
                             if len(cand["text"]) >= 300:
                                 pg = cand
+                                say(f"ได้เนื้อความ {len(cand['text']):,} ตัวอักษร: {cand['title']}", "📄", url=cand["url"])
                                 break
-                        except Exception:
-                            continue
+                            say(f"ข้าม {dom}: เนื้อความสั้นเกินไป", "⛔")
+                        except Exception as e:
+                            say(f"ข้าม {dom}: {e}", "⛔")
                 except Exception as e:
                     READER["error"] = f"ค้นทั้งเว็บไม่สำเร็จ: {e}"
+                    say(READER["error"], "⚠️")
             if pg is None and ws["engine"] in ("both", "wiki"):
+                say(f"ค้น Wikipedia “{topic}”", "🔎")
                 hits = [h for h in WEB.search(topic, ws["lang"], 20) if h["title"] not in have_t]
                 if not hits:
+                    say(f"อ่านเรื่อง “{topic}” ใน Wikipedia ครบแล้ว", "✅")
                     topics.remove(topic)
                     continue
                 pg = WEB.page(random.choice(hits[:10])["title"], ws["lang"])
+                if pg:
+                    say(f"ได้บทความ Wikipedia {len(pg['text']):,} ตัวอักษร: {pg['title']}", "📄", url=pg["url"])
         else:
             READER["state"] = "สุ่มบทความ"
+            say("🌱 แซนด์สุ่มหยิบบทความ Wikipedia มาอ่าน", "🎲")
             pg = WEB.random_page(ws["lang"])
-        if save_page(pg, "learn", ws["lang"]):
-            return pg
+            if pg:
+                say(f"ได้บทความ {len(pg['text']):,} ตัวอักษร: {pg['title']}", "📄", url=pg["url"])
+        if pg:
+            READER["state"] = f"กำลังอ่าน “{pg['title']}”"
+            if save_page(pg, "learn", ws["lang"], show=READ_SHOW):
+                return pg
+            say("เคยอ่านแล้ว หรือเนื้อความสั้นเกินไป ข้าม", "⛔")
     return None
+
+
+_RECHECK = [0.0]
+
+
+def recheck_learning():
+    """พิสูจน์ว่าเรียนรู้จริง: ฝึกไปแล้ว ≥ 500 ก้าว กลับมาวัดบทความเดิมซ้ำ"""
+    if time.time() - _RECHECK[0] < 30:
+        return
+    _RECHECK[0] = time.time()
+    r = q("SELECT id,title,url,content,loss_before FROM web_pages WHERE loss_after IS NULL AND loss_before IS NOT NULL "
+          "AND step_read IS NOT NULL AND ? - step_read >= 500 ORDER BY id LIMIT 1", (trainer.step,))
+    if not r:
+        return
+    r = r[0]
+    after = read_along(r["title"] + "\n" + r["content"])
+    if after is None:
+        return
+    x("UPDATE web_pages SET loss_after=? WHERE id=?", (after, r["id"]))
+    gain = (r["loss_before"] - after) / max(r["loss_before"], 1e-6) * 100
+    say(f"วัดซ้ำ “{r['title']}”: loss {r['loss_before']:.3f} → {after:.3f} "
+        f"({'เข้าใจขึ้น' if gain >= 0 else 'ลืมไป'} {abs(gain):.0f}%)", "📈", url=r["url"],
+        before=r["loss_before"], after=after, gain=gain)
 
 
 def reader_loop():
     """แซนด์ทารกออกไปอ่านเอง: ทีละบทความ ตามช่วงเวลาที่ตั้งไว้ และไม่เกินจำนวนต่อวัน"""
     while True:
+        try:
+            recheck_learning()
+        except Exception as e:
+            print("[recheck]", e)
         ws = web_settings()
         if not (ws["net"] and ws["learn"]):
             READER.update(state="ปิดอยู่", next=0)
@@ -919,18 +1106,21 @@ def reader_loop():
                               error=None)
                 record_growth()
             READER.update(state="รออ่านเรื่องถัดไป", next=time.time() + max(10, ws["interval"]))
+            say(f"พักก่อน อีก {max(10, ws['interval'])} วินาทีจะออกไปอ่านเรื่องถัดไป", "⏳")
         except Exception as e:
             READER.update(state="ต่ออินเทอร์เน็ตไม่ได้ จะลองใหม่", error=f"{type(e).__name__}: {e}",
                           next=time.time() + 60)
+            say(f"ต่ออินเทอร์เน็ตไม่ได้ ({type(e).__name__}) จะลองใหม่ใน 1 นาที", "⚠️")
 
 
 def web_state():
     return {
-        "settings": web_settings(), "reader": READER,
+        "settings": {**web_settings(), "speed": int(float(setting("read_speed", "60")))}, "reader": READER,
         "today": count("SELECT COUNT(*) n FROM web_pages WHERE source='learn' AND ts>?", (time.time() - 86400,)),
         "total": count("SELECT COUNT(*) n FROM web_pages"),
         "chars": q("SELECT SUM(LENGTH(content)) n FROM web_pages")[0]["n"] or 0,
-        "pages": q("SELECT id,title,url,LENGTH(content) chars,ts,source FROM web_pages ORDER BY id DESC LIMIT 40"),
+        "pages": q("SELECT id,title,url,LENGTH(content) chars,ts,source,loss_before,loss_after,step_read "
+                   "FROM web_pages ORDER BY id DESC LIMIT 40"),
     }
 
 
@@ -1052,6 +1242,10 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(b)
 
+    def _sse(self, obj):
+        self.wfile.write(b"data: " + json.dumps(obj, ensure_ascii=False).encode() + b"\n\n")
+        self.wfile.flush()
+
     def body(self):
         n = int(self.headers.get("Content-Length", 0) or 0)
         try:
@@ -1074,6 +1268,27 @@ class Handler(BaseHTTPRequestHandler):
         elif u.path == "/api/history":
             self.send_json(q("SELECT m.id,m.role,m.content,m.ts,m.rating,(t.msg_id IS NOT NULL) has_trace FROM messages m "
                              "LEFT JOIN traces t ON t.msg_id=m.id ORDER BY m.id DESC LIMIT 60")[::-1])
+        elif u.path == "/api/reader/stream":
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+            self.send_header("Cache-Control", "no-cache")
+            self.end_headers()
+            qq = queue.Queue(maxsize=5000)
+            with SUBS_LOCK:
+                SUBS.add(qq)
+            try:
+                self._sse({"type": "hello", "log": list(LOG)[-60:], "reading": READING})
+                while True:
+                    try:
+                        self._sse(qq.get(timeout=15))
+                    except queue.Empty:
+                        self.wfile.write(b": ping\n\n")
+                        self.wfile.flush()
+            except Exception:
+                pass
+            finally:
+                with SUBS_LOCK:
+                    SUBS.discard(qq)
         elif u.path == "/api/trace":
             mid = int(parse_qs(u.query).get("id", ["0"])[0])
             r = q("SELECT data FROM traces WHERE msg_id=?", (mid,))
@@ -1169,6 +1384,11 @@ class Handler(BaseHTTPRequestHandler):
                         pass
             if "topics" in d:
                 set_setting("web_topics", str(d["topics"])[:500])
+            if "speed" in d:
+                try:
+                    set_setting("read_speed", int(max(10, min(2000, float(d["speed"])))))
+                except (TypeError, ValueError):
+                    pass
             if d.get("lang") in ("th", "en"):
                 set_setting("web_lang", d["lang"])
             if d.get("engine") in ("both", "web", "wiki"):

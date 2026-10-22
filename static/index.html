@@ -69,7 +69,7 @@ form#f button:disabled{opacity:.5}
 /* side */
 aside{display:flex;flex-direction:column;min-height:0;background:#18130f}
 nav{display:flex;border-bottom:1px solid var(--line)}
-nav button{flex:1;background:transparent;border:0;padding:12px 2px;cursor:pointer;color:var(--muted);border-bottom:2px solid transparent;font-size:13.5px;white-space:nowrap}
+nav button{flex:1;background:transparent;border:0;padding:12px 1px;cursor:pointer;color:var(--muted);border-bottom:2px solid transparent;font-size:12.5px;white-space:nowrap}
 nav button.on{color:var(--sand);border-bottom-color:var(--sand)}
 .tab{display:none;overflow-y:auto;padding:14px 16px 30px;flex:1}
 .tab.on{display:block}
@@ -251,6 +251,25 @@ details.ref summary{cursor:pointer;font-size:13px;color:var(--sand)}
 .wstatus{font-size:12.5px;background:var(--deep);border-radius:8px;padding:8px 10px;margin-top:8px;line-height:1.6}
 .wstatus b{color:var(--sand);font-weight:600}
 .wlist .item .meta .tag{margin-left:0}
+/* reading */
+.readtext{font-size:16px;line-height:1.9;background:var(--deep);border-radius:9px;padding:10px 12px;max-height:300px;overflow-y:auto;word-break:break-all}
+.readtext span{border-radius:2px;cursor:pointer}
+.readtext span.cur{outline:1.5px solid var(--text);outline-offset:1px}
+.readtext .nl{display:block;height:6px}
+.guessctx{font-size:17px;background:var(--deep);border-radius:9px;padding:8px 10px;margin-bottom:8px;word-break:break-all}
+.guessctx b{background:var(--sand);color:#1b140d;border-radius:3px;padding:0 3px}
+.guessctx .q{color:var(--muted)}
+.rdlog .e{font-size:12.5px;padding:5px 0;border-bottom:1px dashed var(--line);line-height:1.55;display:flex;gap:7px}
+.rdlog .e .ic{flex:none;width:20px;text-align:center}
+.rdlog .e .tm{color:var(--muted);font-size:11px;flex:none;margin-left:auto;padding-left:6px}
+.rdlog .e .items{color:var(--muted);font-size:11.5px}
+.rdlog a,.rdlearn a{color:var(--teal)}
+.novel{background:var(--deep);border-left:3px solid var(--rose);border-radius:6px;padding:6px 9px;margin:6px 0;font-size:14px}
+.novel small{color:var(--muted);display:block;font-size:11.5px}
+.rdlearn .item{font-size:13px}
+.gainbar{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--muted);margin-top:3px}
+.gainbar .t{flex:1;height:7px;background:var(--panel2);border-radius:9px;overflow:hidden;position:relative}
+.gainbar .t i{position:absolute;top:0;bottom:0;border-radius:9px}
 #pCanvas{width:100%;height:300px;display:block;background:var(--deep);border-radius:10px;margin-bottom:8px}
 
 @media (max-width:980px){
@@ -289,6 +308,7 @@ details.ref summary{cursor:pointer;font-size:13px;color:var(--sand)}
   <aside>
     <nav>
       <button data-tab="live" class="on">🧠 สมองสด</button>
+      <button data-tab="read">📖 อ่าน</button>
       <button data-tab="train">📈 การฝึก</button>
       <button data-tab="form">📐 สูตร</button>
       <button data-tab="data">📚 ข้อมูลฝึก</button>
@@ -345,6 +365,35 @@ details.ref summary{cursor:pointer;font-size:13px;color:var(--sand)}
         <div class="math" id="pplMath"></div>
         <div class="say" id="sumSay"></div>
       </div>
+    </div>
+
+    <!-- ===== READING ===== -->
+    <div id="read" class="tab">
+      <div class="status" id="rdStatus"></div>
+      <div class="ctl" style="grid-template-columns:2fr 1fr">
+        <label>ความเร็วในการแสดง (ตัวอักษร/วินาที) <b id="vRs"></b><input type="range" id="sRs" min="10" max="400" step="10"></label>
+        <div style="display:flex;align-items:flex-end;justify-content:flex-end"><button class="btn sm" id="rdNow">📖 ออกไปอ่านเลย</button></div>
+      </div>
+      <div class="card">
+        <h4><span id="rdTitle">ยังไม่ได้อ่านอะไร</span><small id="rdProgTxt"></small></h4>
+        <div class="prog"><i id="rdProg" style="width:0"></i></div>
+        <div class="readtext" id="rdText"><span class="muted">เมื่อแซนด์ออกไปอ่าน ตัวอักษรจะไหลเข้ามาตรงนี้ทีละตัว พร้อมสีบอกว่าแซนด์ทายถูกแค่ไหน</span></div>
+        <div class="legend">🔴 เรื่องใหม่ (ทายไม่ถูก)<span class="grad"></span>รู้อยู่แล้ว (ทายถูก) 🟢</div>
+      </div>
+      <div class="card" id="rdGuessCard">
+        <h4>แซนด์ทายตัวถัดไป <small>คลิกตัวอักษรใดก็ได้เพื่อดูย้อนหลัง</small></h4>
+        <div class="guessctx" id="rdCtx"><span class="q">รอแซนด์อ่าน…</span></div>
+        <div class="bars" id="rdBars"></div>
+        <div class="math" id="rdMath"></div>
+        <div class="math sub" id="rdMath2"></div>
+        <canvas class="chart" id="rdChart" style="height:110px;margin-top:8px"></canvas>
+        <div class="say" id="rdSay">แซนด์ทารกอ่านด้วยการทายตัวอักษรถัดไปก่อนเสมอ ตัวไหนทายผิดมาก (ประหลาดใจมาก) คือสิ่งที่แซนด์ยังไม่รู้และจะได้เรียน</div>
+      </div>
+      <div class="card hidden" id="rdDone"></div>
+      <h3>สิ่งที่แซนด์ทำอยู่ (สด)</h3>
+      <div class="rdlog" id="rdLog"><p class="muted">ยังไม่มีความเคลื่อนไหว</p></div>
+      <h3>พิสูจน์การเรียนรู้: วัดบทความเดิมซ้ำหลังฝึก ≥ 500 ก้าว</h3>
+      <div class="list rdlearn" id="rdLearn"></div>
     </div>
 
     <!-- ===== TRAINING ===== -->
@@ -802,6 +851,7 @@ function switchTab(t){
   if(t === 'train') drawLoss();
   if(t === 'form') drawSparks();
   if(t === 'live') renderSummary();
+  if(t === 'read') rdChart();
 }
 $$('nav button').forEach(b => b.onclick = () => switchTab(b.dataset.tab));
 
@@ -836,7 +886,7 @@ function render(){
     $('#sK').value = st.top_k; $('#vK').textContent = st.top_k;
     $('#sD').value = st.delay; $('#vD').textContent = st.delay;
   }
-  renderTrain(); renderFormulas(); renderData(); renderBrain(); renderWeb();
+  renderTrain(); renderFormulas(); renderData(); renderBrain(); renderWeb(); rdStatus();
   $('#tlList').innerHTML = S.events.map(e => `<div class="ev ${e.kind}"><div>${esc(e.title)}</div><div class="meta">${when(e.ts)}</div></div>`).join('');
 }
 
@@ -1100,6 +1150,132 @@ $('#xfile').onchange = async e => {
   }
   e.target.value = ''; loadState();
 };
+
+/* ---------- live reading (Server-Sent Events) ---------- */
+const RD = {chars: '', p: [], top: [], total: 0, limit: 0, title: '', url: '', sel: null, follow: true, log: []};
+const sbits = p => -Math.log2(Math.max(p, 1e-9));
+function rdReset(ev){
+  Object.assign(RD, {chars: '', p: [], top: [], total: ev.total || 0, limit: ev.limit || 0, title: ev.title || '', url: ev.url || '', sel: null, follow: true});
+  $('#rdTitle').innerHTML = ev.title ? `📖 <a href="${esc(ev.url)}" target="_blank" rel="noopener" style="color:var(--teal)">${esc(ev.title)}</a>` + (ev.source === 'search' ? ' <span class="tag">🎓 ค้นตอนตอบ</span>' : ' <span class="tag">🌱 อ่านเอง</span>') : 'ยังไม่ได้อ่านอะไร';
+  $('#rdText').innerHTML = ''; $('#rdDone').classList.add('hidden');
+}
+function rdSpan(i){
+  const c = RD.chars[i];
+  if(c === '\n') return `<span class="nl" data-r="${i}"></span>`;
+  return `<span data-r="${i}" style="background:${heat(RD.p[i] ?? .5, .5)}">${esc(c === ' ' ? '\u00a0' : c)}</span>`;
+}
+function rdAppend(start, chars, ps, tops){
+  const box = $('#rdText'), atEnd = box.scrollTop + box.clientHeight >= box.scrollHeight - 30;
+  let html = '';
+  for(let k = 0; k < chars.length; k++){
+    const i = RD.chars.length; RD.chars += chars[k]; RD.p.push(ps[k] ?? .5); RD.top.push(tops[k] || []);
+    html += rdSpan(i);
+  }
+  box.insertAdjacentHTML('beforeend', html);
+  if(atEnd) box.scrollTop = 1e9;
+  $('#rdProg').style.width = (RD.limit ? RD.chars.length / RD.limit * 100 : 0) + '%';
+  $('#rdProgTxt').textContent = `${fmtNum(RD.chars.length)} / ${fmtNum(RD.limit)} ตัวอักษร` + (RD.total > RD.limit ? ` (ทั้งบทความ ${fmtNum(RD.total)} อ่านแบบเร็วส่วนที่เหลือ)` : '');
+  if(RD.follow) rdShow(RD.chars.length - 1);
+  rdChart();
+}
+function rdShow(i){
+  if(i < 1 || i >= RD.chars.length) return;
+  RD.sel = i;
+  $$('#rdText span.cur').forEach(e => e.classList.remove('cur'));
+  $(`#rdText [data-r="${i}"]`)?.classList.add('cur');
+  const actual = RD.chars[i], p = RD.p[i], top = RD.top[i] || [];
+  const before = RD.chars.slice(Math.max(0, i - 40), i).replace(/\n/g, '↵');
+  $('#rdCtx').innerHTML = `<span class="q">…</span>${esc(before)}<b>${esc(showCh(actual))}</b>`;
+  const tm = Math.max(p, ...top.map(t => t[1]), 1e-9);
+  const inTop = top.some(t => t[0] === actual);
+  $('#rdBars').innerHTML = top.map(([c, pp], k) => `<div class="row ${c === actual ? 'pick' : ''}"><span class="c">${esc(showCh(c))}</span>
+      <span class="t"><i style="width:${pp/tm*100}%"></i></span><span class="n">ทายอันดับ ${k+1} · ${pct(pp)}</span></div>`).join('')
+    + (inTop ? '' : `<div class="row pick"><span class="c">${esc(showCh(actual))}</span><span class="t"><i style="width:${p/tm*100}%"></i></span><span class="n">ตัวจริง · ${pct(p)}</span></div>`);
+  const b = sbits(p);
+  $('#rdMath').innerHTML = `${MV('s')}${OP('=')}−${SUB('log','2')}${MV('p')}${PA(CH(actual))}${OP('=')}−${SUB('log','2')}${MN(fmtNum(p, 4))}${EQ(fmtNum(b, 2) + ' บิต')}`;
+  const n = RD.p.length - 1, L = RD.p.slice(1).reduce((a, v) => a - Math.log(Math.max(v, 1e-9)), 0) / Math.max(1, n);
+  $('#rdMath2').innerHTML = `loss บทความนี้${OP(':')}${MV('L')}${OP('=')}−${FR(MN(1), MN(fmtNum(n)))}${SIG('i')}ln${SUB(MV('p'),'i')}${EQ(fmtNum(L, 3))}${OP('·')}${S?.train?.val_loss != null ? 'ปกติแซนด์ได้ ' + fmtNum(S.train.val_loss, 3) : 'ยังไม่ได้วัดค่าปกติ'}`;
+  const hit = top[0] && top[0][0] === actual;
+  $('#rdSay').innerHTML = (hit ? `✅ ทายถูกตั้งแต่อันดับแรก แซนด์รู้อยู่แล้วว่าตัวต่อไปต้องเป็น ${CH(actual)}` :
+      inTop ? `🟡 ตัวจริง ${CH(actual)} อยู่ในตัวเลือกของแซนด์ แต่ไม่ใช่อันดับแรก` :
+      `🔴 ไม่ได้คาดไว้เลย ตัวจริงคือ ${CH(actual)} ได้แค่ ${pct(p)} — นี่คือสิ่งใหม่ที่แซนด์จะได้เรียน`)
+    + ` · ความประหลาดใจ ${fmtNum(b, 1)} บิต (${b < 1 ? 'น้อย' : b < 4 ? 'ปานกลาง' : 'มาก'})`;
+}
+function rdChart(){
+  const c = $('#rdChart'), w = c.clientWidth, h = 110, dpr = devicePixelRatio || 1;
+  if(!w || RD.p.length < 3) return;
+  c.width = w*dpr; c.height = h*dpr;
+  const g = c.getContext('2d'); g.scale(dpr,dpr);
+  const N = Math.max(RD.limit, RD.p.length), win = 12, mx = 8;
+  g.strokeStyle = '#2e251d'; for(let k = 1; k < 4; k++){ g.beginPath(); g.moveTo(0, k*h/4); g.lineTo(w, k*h/4); g.stroke(); }
+  g.beginPath();
+  let acc = 0;
+  RD.p.forEach((p, i) => { acc += sbits(p); if(i >= win) acc -= sbits(RD.p[i - win]);
+    const v = Math.min(mx, acc / Math.min(i + 1, win)), X = i / N * w, Y = h - 6 - v / mx * (h - 14);
+    i ? g.lineTo(X, Y) : g.moveTo(X, Y); });
+  g.strokeStyle = '#e07a6a'; g.lineWidth = 1.6; g.stroke();
+  g.fillStyle = '#a8988a'; g.font = '10px ' + FONT(); g.fillText('ความประหลาดใจเฉลี่ย 12 ตัว (บิต) · สูง = เรื่องใหม่', 4, 10);
+}
+function rdLogAdd(ev, prepend = true){
+  if(ev.type !== 'log') return;
+  RD.log.unshift(ev); RD.log.length = Math.min(RD.log.length, 80);
+  const items = (ev.items || []).map(it => { let d = ''; try { d = new URL(it.url).hostname.replace(/^www\./, ''); } catch {}
+    return `<a href="${esc(it.url)}" target="_blank" rel="noopener">${esc(it.title)}</a> (${esc(d)})`; }).join(' · ');
+  const html = `<div class="e"><span class="ic">${ev.icon}</span><span>${esc(ev.text)}${ev.url ? ` <a href="${esc(ev.url)}" target="_blank" rel="noopener">↗</a>` : ''}${items ? `<div class="items">${items}</div>` : ''}</span><span class="tm">${new Date(ev.ts*1000).toLocaleTimeString('th-TH')}</span></div>`;
+  const box = $('#rdLog');
+  if(box.querySelector('p.muted')) box.innerHTML = '';
+  box.insertAdjacentHTML(prepend ? 'afterbegin' : 'beforeend', html);
+  while(box.children.length > 80) box.lastChild.remove();
+}
+function rdDone(ev){
+  const d = $('#rdDone'); d.classList.remove('hidden');
+  d.innerHTML = `<h4>อ่านจบ: ${esc(ev.title)}</h4>
+    <div class="math">${MV('L')}${OP('=')}${MN(fmtNum(ev.loss, 3))}${OP('·')}${fmtNum(ev.bits, 2)} บิตต่อตัวอักษร${OP('·')}ปกติ ${fmtNum(ev.val, 3)}</div>
+    <div class="say"><b>${esc(ev.verdict)}</b> · ทั้งบทความ ${fmtNum(ev.chars)} ตัวอักษรถูกเก็บไว้ฝึกในก้าวถัดไป · หลังฝึกครบ 500 ก้าว แซนด์จะกลับมาวัดบทความนี้ซ้ำ</div>
+    <h3>ช่วงที่แซนด์ประหลาดใจที่สุด (สิ่งที่ยังไม่รู้)</h3>
+    ${ev.novel.map(n => `<div class="novel">${esc(n.text)}…<small>เฉลี่ย ${fmtNum(n.bits, 1)} บิตต่อตัวอักษร</small></div>`).join('')}`;
+}
+function rdLearn(){
+  if(!S) return;
+  const rows = S.web.pages.filter(p => p.loss_before != null);
+  $('#rdLearn').innerHTML = rows.length ? rows.map(p => {
+    const after = p.loss_after, gain = after != null ? (p.loss_before - after) / p.loss_before * 100 : null;
+    const wait = after == null ? Math.max(0, 500 - (S.train.step - (p.step_read || 0))) : 0;
+    return `<div class="item"><a href="${esc(p.url)}" target="_blank" rel="noopener">${esc(p.title)}</a>
+      <div class="gainbar">ก่อน ${fmtNum(p.loss_before, 3)} → ${after != null ? 'หลัง ' + fmtNum(after, 3) : `วัดซ้ำได้อีก ${fmtNum(wait)} ก้าว`}
+        ${gain != null ? `<span class="t"><i style="left:0;width:${Math.min(100, Math.abs(gain))}%;background:${gain >= 0 ? 'var(--green)' : 'var(--rose)'}"></i></span><b style="color:${gain >= 0 ? 'var(--green)' : 'var(--rose)'}">${gain >= 0 ? 'เข้าใจขึ้น' : 'ลืมไป'} ${fmtNum(Math.abs(gain), 0)}%</b>` : ''}</div></div>`;
+  }).join('') : '<p class="muted">ยังไม่มีบทความที่อ่าน</p>';
+}
+function rdStatus(){
+  if(!S) return;
+  const ws = S.web.settings, R = S.web.reader;
+  $('#rdStatus').innerHTML = !ws.net ? '🔌 ยังไม่ได้อนุญาตให้ใช้อินเทอร์เน็ต — เปิดที่แท็บ 📚 ข้อมูลฝึก → 🌐 เรียนรู้จากอินเทอร์เน็ต'
+    : !ws.learn ? '🌱 ยังไม่ได้เปิด “ให้แซนด์ทารกออกไปอ่านเอง” (เปิดที่แท็บ 📚 ข้อมูลฝึก) · ถ้าสมองโตค้นตอนตอบ ก็จะเห็นที่นี่เหมือนกัน'
+    : `🌱 ${esc(R.state)} · วันนี้อ่านไป <b>${S.web.today}</b>/${ws.daily}` + (S.train.running ? ' · 🏋️ กำลังฝึกอยู่' : ' · ⏸ ยังไม่ได้กดฝึก (อ่านแล้วต้องฝึกถึงจะเรียนรู้)');
+  if(document.activeElement !== $('#sRs')){ $('#sRs').value = ws.speed; $('#vRs').textContent = ws.speed; }
+  rdLearn();
+}
+$('#rdText').addEventListener('click', e => { const t = e.target.closest('[data-r]'); if(t){ RD.follow = false; rdShow(+t.dataset.r); } });
+$('#sRs').oninput = e => { $('#vRs').textContent = e.target.value; clearTimeout(settingsTimer);
+  settingsTimer = setTimeout(() => post('/api/web/settings', {speed: +e.target.value}), 300); };
+$('#rdNow').onclick = async () => { await post('/api/web/read_now'); RD.follow = true; };
+function rdConnect(){
+  const es = new EventSource('/api/reader/stream');
+  es.onmessage = m => {
+    const ev = JSON.parse(m.data);
+    if(ev.type === 'hello'){
+      $('#rdLog').innerHTML = ''; RD.log = [];
+      ev.log.forEach(e => rdLogAdd(e)); if(!ev.log.length) $('#rdLog').innerHTML = '<p class="muted">ยังไม่มีความเคลื่อนไหว</p>';
+      const r = ev.reading;
+      if(r && r.title){ rdReset(r); rdAppend(0, r.chars || '', r.p || [], r.top || []); if(r.done) rdDone(r.done); }
+    } else if(ev.type === 'log'){ rdLogAdd(ev); if(ev.icon === '📈') loadState(); }
+    else if(ev.type === 'read_start'){ rdReset(ev); }
+    else if(ev.type === 'chunk'){ rdAppend(ev.start, ev.chars, ev.p, ev.top); }
+    else if(ev.type === 'read_done'){ rdDone(ev); loadState(); }
+  };
+  es.onerror = () => { es.close(); setTimeout(rdConnect, 3000); };
+}
+rdConnect();
 
 /* ---------- internet ---------- */
 function renderWeb(){
