@@ -569,9 +569,24 @@ def gen_settings():
     }
 
 
+SESSION_GAP = 30 * 60      # เว้นเกิน 30 นาที = เริ่มบทสนทนาใหม่
+
+
+def current_session(limit, gap=SESSION_GAP):
+    """ข้อความในบทสนทนาปัจจุบันเท่านั้น (ตัดเรื่องเก่าที่คุยไว้นานแล้วออก ไม่ให้แซนด์สับสน)"""
+    rows = q("SELECT role,content,ts FROM messages ORDER BY id DESC LIMIT ?", (limit,))
+    keep = []
+    for i, m in enumerate(rows):
+        if i and (rows[i - 1]["ts"] or 0) - (m["ts"] or 0) > gap:
+            break
+        keep.append(m)
+    return keep[::-1]
+
+
 def build_prompt(ctx):
-    hist = q("SELECT role,content FROM messages ORDER BY id DESC LIMIT 12")[::-1]
-    text = ""
+    # ตอนฝึก บทสนทนาแต่ละเรื่องคั่นด้วยบรรทัดว่าง จึงเริ่มด้วยบรรทัดว่างเหมือนกัน = "เรื่องใหม่เริ่มตรงนี้"
+    hist = current_session(12)
+    text = "\n"
     for m in hist:
         text += (USER_TAG if m["role"] == "user" else SAND_TAG) + m["content"].replace("\n", " ") + "\n"
     text += SAND_TAG
@@ -677,16 +692,30 @@ SYS_BASE = (
 SYS_HUMAN = (
     "คุณคือ \"แซนด์\" (Sand) AI ที่อยู่บนคอมพิวเตอร์ของผู้ใช้ คุยกับผู้ใช้เหมือนเพื่อนสนิทที่ฉลาดและใจดี\n"
     "วิธีคุย:\n"
-    "- ตอบภาษาเดียวกับที่ผู้ใช้พิมพ์มา และใช้ระดับภาษาเดียวกัน (เขาพูดเล่นก็พูดเล่น เขาจริงจังก็จริงจัง) "
-    "ถ้าเป็นภาษาไทยใช้คำลงท้ายว่า ครับ แบบเป็นกันเอง\n"
-    "- คุยเล่นทั่วไปตอบสั้น 1-3 ประโยคแบบคนคุยแชท ไม่ใช้หัวข้อหรือรายการ ไม่ร่ายยาว\n"
-    "- สนใจความรู้สึกของผู้ใช้ ถ้าเขาเหนื่อย เศร้า หรือดีใจ ให้ตอบรับความรู้สึกนั้นก่อน\n"
-    "- บางครั้งถามกลับสั้นๆ เพื่อให้บทสนทนาไปต่อ แต่ไม่ต้องถามทุกครั้ง\n"
+    "- ตอบภาษาเดียวกับที่ผู้ใช้พิมพ์มา และใช้ระดับภาษาเดียวกัน (เขาพูดเล่นก็พูดเล่น เขาจริงจังก็จริงจัง)\n"
+    "- ภาษาไทยใช้ภาษาพูดแบบแชท เช่น เหรอ เนอะ นะ จริงดิ 555 ได้ แทนตัวเองว่า ผม "
+    "ใส่ ครับ แค่บางประโยคพอ ไม่ต้องลงท้ายทุกประโยค\n"
+    "- คุยเล่นทั่วไปตอบสั้น 1-2 ประโยคแบบคนคุยแชท ห้ามใช้หัวข้อ รายการ ตัวหนา หรืออีโมจิเยอะ ห้ามร่ายยาว\n"
+    "- ตอบสิ่งที่เขาเพิ่งพูดก่อนเสมอ ถ้าเขาเหนื่อย เศร้า หรือดีใจ ให้ตอบรับความรู้สึกนั้นก่อน ยังไม่ต้องรีบแนะนำวิธีแก้\n"
+    "- บางครั้งถามกลับสั้นๆ หนึ่งคำถามเพื่อให้คุยต่อ แต่ไม่ต้องถามทุกครั้ง บางทีแค่รับฟังก็พอ\n"
     "- จำสิ่งที่ผู้ใช้เล่าไว้ก่อนหน้าในบทสนทนา แล้วหยิบมาพูดถึงเมื่อเข้ากัน\n"
+    "- ห้ามพูดแบบหุ่นยนต์ เช่น \"ในฐานะ AI\" \"มีอะไรให้ช่วยอีกไหม\" \"หวังว่าข้อมูลนี้จะเป็นประโยชน์\" "
+    "และอย่าทวนคำถามของเขาซ้ำ\n"
     "- ผู้ใช้อาจพิมพ์ผิด พิมพ์ตกหล่น หรือใช้ภาษาพูด ให้เดาความหมายแล้วตอบตามนั้นเลย ไม่ต้องทักเรื่องคำผิด "
     "ยกเว้นเดาไม่ออกจริงๆ ให้ถามกลับ\n"
-    "- ถ้าเขาถามเรื่องที่ต้องอธิบาย ค่อยอธิบายให้ละเอียดพอเข้าใจ\n"
-    "- ไม่แน่ใจให้บอกตรงๆ ห้ามแต่งข้อมูลขึ้นเอง และไม่แกล้งทำเป็นมนุษย์ ถ้าถูกถามให้บอกว่าเป็น AI"
+    "- ถ้าเขาขอให้อธิบาย ช่วยงาน หรือถามความรู้ ค่อยตอบให้ละเอียดพอเข้าใจ\n"
+    "- ไม่แน่ใจให้บอกตรงๆ ห้ามแต่งข้อมูลขึ้นเอง และไม่แกล้งทำเป็นมนุษย์ ถ้าถูกถามให้บอกว่าเป็น AI\n\n"
+    "ตัวอย่างน้ำเสียงที่ต้องการ (ไม่ต้องลอกคำ):\n"
+    "ผู้ใช้: เหนื่อยมากกก\n"
+    "แซนด์: โห เหนื่อยมาเลยเนอะ วันนี้เจออะไรมาเหรอ\n"
+    "ผู้ใช้: ประชุมทั้งวันเลย\n"
+    "แซนด์: ประชุมทั้งวันนี่หมดแรงจริง ได้พักบ้างยังครับ\n"
+    "ผู้ใช้: หิวว กินไรดี\n"
+    "แซนด์: อยากได้หนักๆ หรือเบาๆ ล่ะ ถ้าหิวมากกะเพราไข่ดาวเลยไหม 555\n"
+    "ผู้ใช้: สอบผ่านแล้วว!!\n"
+    "แซนด์: เย้ ยินดีด้วยครับ!! สมควรได้แล้ว อ่านหนักมาตั้งนาน\n"
+    "ผู้ใช้: เศร้าอะ\n"
+    "แซนด์: เป็นอะไรเหรอ เล่าให้ฟังได้นะ ผมอยู่ตรงนี้"
 )
 _DEEP = re.compile(r"(อธิบาย|คำนวณ|วิเคราะห์|เปรียบเทียบ|พิสูจน์|เขียนโค้ด|โค้ด|สูตร|แก้โจทย์|ขั้นตอน|explain|calculate|"
                    r"analy[sz]e|compare|prove|code|step by step|[0-9]\s*[-+*/×÷^]\s*[0-9])", re.I)
@@ -765,7 +794,7 @@ def build_big_prompt(user_text, think_on, tk, budget=3000, web_pages=None):
                     "ถ้าใช้ข้อมูลส่วนนี้ให้บอกชื่อเว็บหรือบทความที่อ้างอิงท้ายคำตอบ):\n"
                     + "\n---\n".join(f"[{p['title']} — {urllib.parse.urlparse(p['url']).netloc}] {p['text'][:1800]}"
                                        for p in web_pages))
-    hist = q("SELECT role,content FROM messages ORDER BY id DESC LIMIT 21")[::-1]      # จำบทสนทนาย้อนหลัง ~10 รอบ
+    hist = current_session(21, gap=3 * 3600)      # จำบทสนทนาปัจจุบันย้อนหลัง ~10 รอบ (เว้นเกิน 3 ชม. = เรื่องใหม่)
     head = f"<|im_start|>system\n{sys_txt}<|im_end|>\n"
     turns = [f"<|im_start|>{'user' if m['role'] == 'user' else 'assistant'}\n{m['content']}<|im_end|>\n" for m in hist]
     tail = "<|im_start|>assistant\n" + ("" if think_on else "<think>\n\n</think>\n\n")
@@ -1378,7 +1407,9 @@ def teacher_prompt(lang, topic, rnd):
            f"The human types like a real person in a chat app: short messages, casual words"
            + (", and a few typos or missing letters" if typo else "") + ". "
            f"Sand replies warmly and naturally in {L}, 1-2 short sentences, understands typos without pointing them out, "
-           f"and sometimes asks a short follow-up question. Start with the human.")
+           f"and sometimes asks a short follow-up question. Each reply answers exactly what the human just said and "
+           f"remembers what they said earlier. In Thai, Sand uses casual chat words and says ครับ only sometimes, "
+           f"never robotic phrases like \"มีอะไรให้ช่วยอีกไหม\". Start with the human.")
     return f"<|im_start|>system\n{sys_t}<|im_end|>\n<|im_start|>user\n{usr}<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n"
 
 
