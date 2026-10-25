@@ -155,8 +155,9 @@ def _scaled_sum(v):
 
 # ---------------------------------------------------------------- คิดทีละตัวอักษร พร้อมบันทึกสูตร
 @torch.no_grad()
-def think_step(model, tok, ids, temperature=0.8, top_k=20, device="cpu", show=96):
-    """คำนวณตัวอักษรถัดไป 1 ตัว และเก็บตัวเลขทุกขั้นไว้แสดงสูตร"""
+def think_step(model, tok, ids, temperature=0.8, top_k=20, device="cpu", show=96, force=None):
+    """คำนวณตัวอักษรถัดไป 1 ตัว และเก็บตัวเลขทุกขั้นไว้แสดงสูตร
+    force = id ของตัวอักษรที่เลือกไว้แล้ว (ใช้ตอนแสดงคำตอบที่ชนะการเลือก) — ตัวเลขทุกขั้นยังคำนวณจริง"""
     model.eval()
     ctx = model.cfg["ctx"]
     ids_c = ids[-ctx:]
@@ -172,7 +173,7 @@ def think_step(model, tok, ids, temperature=0.8, top_k=20, device="cpu", show=96
         kth = torch.topk(probs, int(top_k)).values[-1]
         sampling[sampling < kth] = 0
         sampling /= sampling.sum()
-    nxt = int(torch.multinomial(sampling.float(), 1).item())
+    nxt = int(force) if force is not None else int(torch.multinomial(sampling.float(), 1).item())
 
     top = torch.topk(probs, 8)
     ent = float(-(probs * torch.log2(probs.clamp_min(1e-12))).sum())
@@ -201,3 +202,65 @@ def think_step(model, tok, ids, temperature=0.8, top_k=20, device="cpu", show=96
                       "dot": dot, "dk": dk, "sum": att_sum, "back": len(ids_c) - 1 - pos},
         "norms": [round(l["norm"], 2) for l in tr],
     }
+
+
+# ---------------------------------------------------------------- คิดหลายคำตอบ แล้วเลือกแบบที่เข้ากับบทสนทนาที่สุด
+@torch.no_grad()
+def sample_replies(model, tok, ids, n=6, temperature=0.8, top_k=20, device="cpu", max_chars=160):
+    """สุ่มคำตอบ n แบบพร้อมกัน (หยุดเมื่อเจอขึ้นบรรทัดใหม่) — ยังไม่เลือก"""
+    model.eval()
+    ctx = model.cfg["ctx"]
+    nl = tok.stoi["\n"]
+    rows = [list(ids) for _ in range(n)]
+    outs = [[] for _ in range(n)]
+    alive = list(range(n))
+    T = max(float(temperature), 1e-3)
+    for _ in range(max_chars):
+        if not alive:
+            break
+        x = torch.tensor([rows[i][-ctx:] for i in alive], device=device)
+        z = model(x)[0][:, -1].float() / T
+        if top_k and top_k < z.shape[-1]:
+            kth = torch.topk(z, int(top_k), dim=-1).values[:, -1:]
+            z = z.masked_fill(z < kth, float("-inf"))
+        nxt = torch.multinomial(torch.softmax(z, -1), 1)[:, 0].tolist()
+        still = []
+        for i, c in zip(alive, nxt):
+            if c == nl:
+                continue
+            rows[i].append(c)
+            outs[i].append(c)
+            still.append(i)
+        alive = still
+    return [tok.decode(o) for o in outs]
+
+
+@torch.no_grad()
+def reply_logp(model, tok, ctx_ids, reply, device="cpu"):
+    """ค่าเฉลี่ย log p ของทุกตัวอักษรในคำตอบ (รวมการจบบรรทัด) เมื่อมีบริบท ctx_ids ก่อนหน้า
+    log p(คำตอบ | บริบท) = (1/N) Σᵢ ln p(cᵢ | บริบท, c₁…cᵢ₋₁)"""
+    model.eval()
+    r = tok.encode(reply + "\n")
+    keep = max(1, model.cfg["ctx"] - len(r))
+    seq = list(ctx_ids)[-keep:] + r
+    seq = seq[-(model.cfg["ctx"] + 1):]
+    x = torch.tensor([seq[:-1]], device=device)
+    lp = torch.log_softmax(model(x)[0][0].float(), -1)
+    n = min(len(r), len(seq) - 1)
+    tgt = torch.tensor(seq[-n:], device=device)
+    return float(lp[-n:].gather(1, tgt[:, None]).mean())
+
+
+# ---------------------------------------------------------------- วัดว่าคุยต่อเรื่องได้ไหม
+@torch.no_grad()
+def topic_test(model, tok, items, device="cpu"):
+    """ข้อสอบคุยต่อเรื่อง: แต่ละข้อมีบทสนทนา + คำตอบที่ถูก + คำตอบจากเรื่องอื่น
+    ได้คะแนนเมื่อ log p(คำตอบที่ถูก | บทสนทนา) > log p(คำตอบเรื่องอื่น | บทสนทนา)
+    คืนค่า % ข้อที่ถูก (สุ่มเดาได้ 50%)"""
+    if not items:
+        return None
+    ok = 0
+    for ctx, good, bad in items:
+        ids = tok.encode(ctx)
+        ok += reply_logp(model, tok, ids, good, device) > reply_logp(model, tok, ids, bad, device)
+    return 100.0 * ok / len(items)

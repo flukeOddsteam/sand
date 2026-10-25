@@ -428,6 +428,24 @@ def build(n=900, seed=11):
     return out
 
 
+def topic_items(n=40, seed=2026):
+    """ข้อสอบคุยต่อเรื่อง: ตัดบทสนทนาที่รอบ 2 ขึ้นไป → (บทสนทนาก่อนหน้า, คำตอบที่ถูก, คำตอบจากเรื่องอื่น)"""
+    r = random.Random(seed)
+    items = []
+    while len(items) < n:
+        a = dialogue(r).strip().split("\n")
+        b = dialogue(r).strip().split("\n")
+        if len(a) < 4 or a[0] == b[0]:
+            continue
+        k = r.randrange(3, len(a), 2)                 # ตำแหน่งคำตอบของแซนด์ (รอบที่ 2 ขึ้นไป)
+        bad = [x for x in b[1::2] if x != a[k]]
+        if not bad:
+            continue
+        ctx = "\n" + "\n".join(a[:k]) + "\n" + S
+        items.append((ctx, a[k][len(S):], r.choice(bad)[len(S):]))
+    return items
+
+
 if __name__ == "__main__":
     ds = build()
     lens = sorted(map(len, ds))

@@ -14,7 +14,7 @@ import time
 
 import torch
 
-from brain import SIZES, SAND_TAG, Brain, Tokenizer, USER_TAG, pick_device, think_step
+from brain import SIZES, SAND_TAG, Brain, Tokenizer, USER_TAG, pick_device, think_step, topic_test
 
 SAMPLE_PROMPTS = ["สวัสดี", "คุณชื่ออะไร", "3 + 4 เท่ากับเท่าไร", "คำตรงข้ามของ ร้อน", "cat แปลว่าอะไร",
                   "วันต่อจากวันจันทร์คือวันอะไร", "ขอบคุณ", "นับ 2 ถึง 6"]
@@ -36,7 +36,11 @@ class Trainer:
         self.thread = None
         self.waiting = 0          # มีคนรอคุยอยู่กี่คน (ครูฝึกจะหลีกทางให้)
         self.dirty = True
-        self.train_data = self.val_data = None
+        self.train_data = self.val_data = self.chat_data = None
+        self.p_chat = 0.0
+        self.topic_items = []     # ข้อสอบคุยต่อเรื่อง (ตั้งจาก app.py)
+        self.topic = None
+        self.topic_hist = []
         self.data_info = {}
         self.ema = None
         self.last = {}
@@ -60,6 +64,8 @@ class Trainer:
         self.best_val = None
         self.born = time.time()
         self.ema = None
+        self.topic = None
+        self.topic_hist = []
 
     def load(self):
         if not os.path.exists(self.path):
@@ -81,6 +87,8 @@ class Trainer:
             self.history, self.samples = ck["history"], ck["samples"]
             self.val_loss, self.best_val = ck.get("val_loss"), ck.get("best_val")
             self.born = ck.get("born", time.time())
+            self.topic_hist = ck.get("topic_hist", [])
+            self.topic = self.topic_hist[-1][1] if self.topic_hist else None
             self.ema = self.history[-1][1] if self.history else None
             return True
         except Exception as e:
@@ -93,7 +101,7 @@ class Trainer:
                   "opt": self.opt.state_dict(), "chars": self.tok.itos, "size": self.size,
                   "step": self.step, "tokens": self.tokens, "history": self.history[-4000:],
                   "samples": self.samples[-300:], "val_loss": self.val_loss, "best_val": self.best_val,
-                  "born": self.born}
+                  "born": self.born, "topic_hist": self.topic_hist[-400:]}
         tmp = self.path + ".tmp"
         torch.save(ck, tmp)
         os.replace(tmp, self.path)
@@ -125,7 +133,9 @@ class Trainer:
         return new
 
     def build_data(self):
-        weighted, unique = self.get_corpus()
+        got = self.get_corpus()
+        weighted, unique = got[0], got[1]
+        extra_info = got[2] if len(got) > 2 else {}
         self.grow_vocab(unique + "".join(t for t, w in weighted[:2000]))
         ids = self.tok.encode(unique)
         cut = int(len(ids) * 0.95)
@@ -142,7 +152,12 @@ class Trainer:
             val = train[-need * 4:]
         self.train_data = torch.tensor(train, dtype=torch.long)
         self.val_data = torch.tensor(val, dtype=torch.long)
-        self.data_info = {"train_chars": len(train), "val_chars": len(val), "unique_chars": len(unique)}
+        # บทสนทนาแยกไว้อีกกอง: ทุกก้าวหยิบจากกองนี้ตามสัดส่วน p_chat ไม่ให้ถูกบทความยาวๆ กลบ
+        chat = self.tok.encode(extra_info.get("chat", ""))
+        self.chat_data = torch.tensor(chat, dtype=torch.long) if len(chat) > need * 2 else None
+        self.p_chat = max(0.0, min(1.0, float(extra_info.get("p_chat", 0.0))))
+        self.data_info = {"train_chars": len(train), "val_chars": len(val), "unique_chars": len(unique),
+                          "chat_chars": len(chat), "p_chat": self.p_chat}
         self.dirty = False
 
     def get_batch(self, data, n):
@@ -158,7 +173,14 @@ class Trainer:
         for g in self.opt.param_groups:
             g["lr"] = lr
         self.model.train()
-        x, y = self.get_batch(self.train_data, self.batch)
+        n_chat = int(round(self.batch * self.p_chat)) if self.chat_data is not None else 0
+        parts = []
+        if n_chat:
+            parts.append(self.get_batch(self.chat_data, n_chat))
+        if self.batch - n_chat:
+            parts.append(self.get_batch(self.train_data, self.batch - n_chat))
+        x = torch.cat([a for a, _ in parts])
+        y = torch.cat([b for _, b in parts])
         _, loss, _ = self.model(x, y)
         self.opt.zero_grad(set_to_none=True)
         loss.backward()
@@ -206,6 +228,9 @@ class Trainer:
                         self.best_val = self.val_loss if self.best_val is None else min(self.best_val, self.val_loss)
                         self.history.append([self.step, round(self.ema, 4), round(self.val_loss, 4),
                                              self.last["lr"], round(self.last["gnorm"], 3), time.time()])
+                        if self.step % 500 == 0 and self.topic_items:
+                            self.topic = topic_test(self.model, self.tok, self.topic_items, self.device)
+                            self.topic_hist.append([self.step, round(self.topic, 1)])
                         if self.step % 300 == 0:
                             p = SAMPLE_PROMPTS[(self.step // 300) % len(SAMPLE_PROMPTS)]
                             self.samples.append([self.step, p, self.speak(p)])
@@ -250,6 +275,7 @@ class Trainer:
             "random_loss": math.log(len(self.tok)), "born": self.born,
             "history": self.history[-400:], "samples": self.samples[-40:][::-1],
             "data": self.data_info, "dirty": self.dirty,
+            "topic": self.topic, "topic_hist": self.topic_hist[-100:],
             "sizes": {k: {"label": v["label"], "d": v["d"], "layers": v["layers"], "heads": v["heads"], "ctx": v["ctx"]}
                       for k, v in SIZES.items()},
         }

@@ -142,6 +142,22 @@ def build(seed=7):
     return "\n".join(out)
 
 
+def build_chat(seed=7):
+    """เฉพาะบทสนทนา: บทสนทนาพื้นฐาน + หลายภาษา + บทสนทนาต่อเนื่องแบบมนุษย์ (ใช้เป็นกองบทสนทนาตอนฝึก)"""
+    import os
+    import re
+    import convo_data
+    rnd = random.Random(seed)
+    out = [pair(q, a) for q, a in DIALOGUES]
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "5-หลายภาษาและคำผิด.txt")
+    if os.path.exists(path):
+        with open(path, encoding="utf-8") as f:
+            out += [b.strip() + "\n" for b in re.split(r"\n\s*\n", f.read()) if b.strip()]
+    out += convo_data.build(n=900) * 2
+    rnd.shuffle(out)
+    return "\n".join(out)
+
+
 if __name__ == "__main__":
     text = build()
     print(len(text), "ตัวอักษร")

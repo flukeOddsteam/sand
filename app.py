@@ -27,7 +27,7 @@ import web as WEB
 import formulas as F
 import typos as TY
 import seed_data
-from brain import SAND_TAG, USER_TAG, think_step
+from brain import SAND_TAG, USER_TAG, think_step, sample_replies, reply_logp
 from trainer import Trainer
 
 try:
@@ -72,6 +72,12 @@ BUILTIN_FORMULAS = [
      "ทุกคู่ถาม-ตอบ มีโอกาสเท่านี้ที่จะถูกทำสำเนาแบบฝั่งผู้ใช้พิมพ์ผิด (คำตอบยังถูก) "
      "ให้แซนด์เรียนว่าคำผิดแปลว่าอะไร · ยิ่งฝึกนาน ยิ่งเจอคำผิดมากขึ้น", "train"),
     ("w_typo", "น้ำหนัก: สำเนาพิมพ์ผิด", "1", "เท่า", "สำเนาพิมพ์ผิดแต่ละชุด จะถูกอ่านกี่เท่า", "train"),
+    ("p_chat", "สัดส่วนบทสนทนาในทุกก้าวฝึก", "0.5", "",
+     "ทุกก้าว ครูฝึกหยิบข้อความจากกองบทสนทนา (บทเรียนตั้งต้น สิ่งที่สอน 👍 บทสนทนาที่ไปเรียนมา สำเนาพิมพ์ผิด) "
+     "ตามสัดส่วนนี้ ที่เหลือหยิบจากข้อมูลทั้งหมด · กันไม่ให้บทความยาวๆ จากเว็บกลบการหัดคุย · 0 = แบบเดิม", "train"),
+    ("rerank_b", "น้ำหนักความเฉพาะเรื่อง β (ตอนเลือกคำตอบ)", "0", "",
+     "แซนด์ทารกคิดคำตอบหลายแบบแล้วให้คะแนน  คะแนน = log p(คำตอบ | บทสนทนา) − β · log p(คำตอบ) "
+     "β สูง = ชอบคำตอบที่ต่อจากสิ่งที่คุณพูดจริงๆ (ไม่ใช่ประโยคกลางๆ ที่ตอบอะไรก็ได้) · 0 = เลือกแค่คำตอบที่มั่นใจที่สุด", "train"),
 ]
 
 VAR_LABELS = {
@@ -97,6 +103,7 @@ VAR_LABELS = {
 lock = threading.Lock()
 trainer = None
 SEED_TEXT = seed_data.build()
+CHAT_SEED = seed_data.build_chat()       # เฉพาะบทสนทนาในบทเรียนตั้งต้น (ไม่รวมแบบฝึกเลข)
 
 
 # ---------------------------------------------------------------- database
@@ -154,6 +161,7 @@ def init_db():
     CREATE TABLE IF NOT EXISTS traces(msg_id INTEGER PRIMARY KEY, data TEXT);
     CREATE TABLE IF NOT EXISTS web_pages(id INTEGER PRIMARY KEY, title TEXT, url TEXT UNIQUE, content TEXT,
         ts REAL, source TEXT, lang TEXT);
+    CREATE TABLE IF NOT EXISTS dialogues(id INTEGER PRIMARY KEY, lang TEXT, text TEXT UNIQUE, source TEXT, ts REAL);
     CREATE TABLE IF NOT EXISTS convos(id INTEGER PRIMARY KEY, lang TEXT, q TEXT, a TEXT, source TEXT, ts REAL,
         UNIQUE(q, a));
     """)
@@ -456,6 +464,8 @@ def get_corpus():
             break
         webs.append(r["title"] + "\n" + r["content"])
     convos = [pair(r["q"], r["a"]) for r in q("SELECT q,a FROM convos ORDER BY id DESC LIMIT 40000")[::-1]]
+    # บทสนทนาหลายรอบทั้งเรื่อง (ที่สมองโตแต่งให้) — เก็บทั้งเรื่องไว้ แซนด์จึงเรียนการคุยต่อเนื่อง ไม่ใช่แค่คู่เดี่ยว
+    convos += [r["text"] for r in q("SELECT text FROM dialogues ORDER BY id DESC LIMIT 20000")[::-1]]
     # ข้อความที่ไม่ได้ใช้ฝึก (validation) ตัดจากท้ายสุด จึงวางบทเรียนตั้งต้นไว้ท้าย
     unique = "\n".join(webs + texts + convos + liked + taught + [SEED_TEXT])
     weighted = [(t, w("w_taught", 8) - 1) for t in taught] + \
@@ -466,7 +476,8 @@ def get_corpus():
     typo = typo_copies(taught + liked + convos + texts + [SEED_TEXT], max(0.0, min(1.0, res.get("p_typo", 0.3))))
     weighted += [(t, w("w_typo", 1)) for t in typo]
     TYPO_INFO.update(n=len(typo), chars=sum(map(len, typo)), examples=typo[:6])
-    return weighted, unique
+    chat = "\n".join(taught * 4 + liked * 2 + convos + typo + [CHAT_SEED])
+    return weighted, unique, {"chat": chat, "p_chat": res.get("p_chat", 0.5)}
 
 
 TYPO_INFO = {"n": 0, "chars": 0, "examples": []}
@@ -509,7 +520,8 @@ def data_summary():
             {"name": "ข้อความที่ป้อน", "chars": x_chars, "weight": res.get("w_text")},
             {"name": "อ่านเองจากอินเทอร์เน็ต", "chars": q("SELECT SUM(LENGTH(content)) n FROM web_pages")[0]["n"] or 0,
              "weight": res.get("w_web")},
-            {"name": "บทสนทนาของมนุษย์ (หลายภาษา)", "chars": q("SELECT SUM(LENGTH(q)+LENGTH(a)) n FROM convos")[0]["n"] or 0,
+            {"name": "บทสนทนาของมนุษย์ (หลายภาษา)", "chars": (q("SELECT SUM(LENGTH(q)+LENGTH(a)) n FROM convos")[0]["n"] or 0)
+             + (q("SELECT SUM(LENGTH(text)) n FROM dialogues")[0]["n"] or 0),
              "weight": res.get("w_convo")},
             {"name": "สำเนาพิมพ์ผิด (สร้างอัตโนมัติ)", "chars": TYPO_INFO["chars"], "weight": res.get("w_typo")},
         ],
@@ -565,6 +577,7 @@ def gen_settings():
         "think": setting("think", "1") == "1",
         "style": setting("style", "human"),
         "max_tokens": int(float(setting("max_tokens", "1024"))),
+        "baby_candidates": int(float(setting("baby_candidates", "4"))),
         "brain": setting("brain", "baby"),
     }
 
@@ -1435,6 +1448,9 @@ def teacher_job(langs, n):
                 break
             pairs = parse_dialogue(text)
             got = sum(_save_convo(lang, a, b, "teacher") for a, b in pairs)
+            if len(pairs) >= 2:
+                whole = "".join(pair(_trim(a, 160), _trim(b, 240)) for a, b in pairs)
+                x("INSERT OR IGNORE INTO dialogues(lang,text,source,ts) VALUES(?,?,?,?)", (lang, whole, "teacher", time.time()))
             TEACH_JOB["added"] += got
             TEACH_JOB["done"] = i + 1
             TEACH_JOB["last"] = text[:600]
@@ -1540,11 +1556,21 @@ def _stream_chat(user_text, write):
             "device": t.device, "ctx": ctx, "layers": t.model.cfg["layers"], "heads": t.model.cfg["heads"],
             "d": t.model.cfg["d"], "step": t.step, "T": gs["temperature"], "top_k": gs["top_k"],
             "prompt_chars": len(prompt), "vocab": len(t.tok)}
+    n_cand = max(1, min(12, gs["baby_candidates"]))
+    t0 = time.time()
+    chosen = None
+    if n_cand > 1:
+        chosen, cands = pick_reply(t, ids, n_cand, gs)
+        info["candidates"] = cands
+        if chosen is not None:
+            write({"note": rerank_note(cands)})
     write({"start": info, "prompt": prompt})
-    tokens, out, t0 = [], "", time.time()
-    for _ in range(MAX_REPLY):
+    tokens, out = [], ""
+    forced = None if chosen is None else t.tok.encode(chosen + "\n")
+    for i in range(MAX_REPLY if forced is None else len(forced)):
         with t.lock:
-            st = think_step(t.model, t.tok, ids, gs["temperature"], gs["top_k"], t.device)
+            st = think_step(t.model, t.tok, ids, gs["temperature"], gs["top_k"], t.device,
+                            force=None if forced is None else forced[i])
         if st["ch"] == "\n":
             st["stop"] = True
             tokens.append(st)
@@ -1567,6 +1593,52 @@ def _stream_chat(user_text, write):
       (aid, json.dumps({"info": info, "prompt": prompt, "tokens": tokens, "summary": summary}, ensure_ascii=False)))
     write({"done": True, "id": aid, "summary": summary})
     record_growth()
+
+
+def pick_reply(t, ids, n, gs):
+    """แซนด์ทารกคิดคำตอบ n แบบ แล้วเลือกแบบที่ "ต่อจากสิ่งที่ผู้ใช้พูด" มากที่สุด
+    คะแนน = log p(คำตอบ | บทสนทนา) − β · log p(คำตอบ | ไม่มีบทสนทนา)
+    ส่วนแรก: ภาษาลื่นและเข้ากับบทสนทนาไหม · ส่วนหลัง: หักคะแนนประโยคกลางๆ ที่ใช้ตอบอะไรก็ได้"""
+    beta = max(0.0, min(2.0, core()[1].get("rerank_b", 0.5)))
+    said = {m["content"].strip() for m in current_session(12) if m["role"] == "assistant"}
+    with t.lock:
+        raw = sample_replies(t.model, t.tok, ids, n, gs["temperature"], gs["top_k"], t.device, MAX_REPLY)
+        plain = t.tok.encode("\n" + SAND_TAG)
+        cands, seen = [], set()
+        for c in raw:
+            c = c.strip()
+            if not c or c in seen:
+                continue
+            seen.add(c)
+            a = reply_logp(t.model, t.tok, ids, c, t.device)
+            b = reply_logp(t.model, t.tok, plain, c, t.device)
+            sc = a - beta * b
+            why = ""
+            if c in said:
+                sc -= 1.0
+                why = "ซ้ำกับที่เพิ่งพูด"
+            cands.append({"text": c, "lp_ctx": round(a, 3), "lp_plain": round(b, 3), "score": round(sc, 3),
+                          "beta": beta, "penalty": why})
+    cands.sort(key=lambda d: -d["score"])
+    return (cands[0]["text"] if cands else None), cands
+
+
+def rerank_note(cands):
+    if not cands:
+        return ""
+    b = cands[0]["beta"]
+    best = cands[0]
+    if b:
+        s = (f"🎲 แซนด์คิดคำตอบ {len(cands)} แบบ แล้วเลือกแบบที่เฉพาะกับสิ่งที่คุณพูดที่สุด · "
+             f"คะแนน = log p(ตอบ|บทสนทนา) − {b:g}·log p(ตอบ) = {best['lp_ctx']:.2f} − {b:g}·({best['lp_plain']:.2f}) "
+             f"= {best['score']:.2f}")
+    else:
+        s = (f"🎲 แซนด์คิดคำตอบ {len(cands)} แบบ แล้วเลือกแบบที่สมองมั่นใจที่สุด · "
+             f"คะแนน = (1/N) Σ ln p(ตัวอักษร | บทสนทนา) = {best['score']:.2f}")
+    others = [f"“{c['text'][:30]}” {c['score']:.2f}" for c in cands[1:3]]
+    if others:
+        s += " · ไม่เลือก: " + ", ".join(others)
+    return s
 
 
 def rate(mid, val):
@@ -1730,6 +1802,7 @@ class Handler(BaseHTTPRequestHandler):
             ok()
         elif p == "/api/learn/convo/clear":
             x("DELETE FROM convos" + (" WHERE lang=?" if d.get("lang") else ""), (d["lang"],) if d.get("lang") else ())
+            x("DELETE FROM dialogues" + (" WHERE lang=?" if d.get("lang") else ""), (d["lang"],) if d.get("lang") else ())
             data_changed()
             ok()
         elif p == "/api/rate":
@@ -1846,7 +1919,8 @@ class Handler(BaseHTTPRequestHandler):
                 set_setting("style", d["style"])
             if "forget_name" in d:
                 x("DELETE FROM settings WHERE key='user_name'")
-            for k, lo, hi in (("temperature", 0.05, 3), ("top_k", 1, 200), ("delay", 0, 1000), ("max_tokens", 16, 4096)):
+            for k, lo, hi in (("temperature", 0.05, 3), ("top_k", 1, 200), ("delay", 0, 1000), ("max_tokens", 16, 4096),
+                              ("baby_candidates", 1, 12)):
                 if k in d:
                     try:
                         set_setting(k, max(lo, min(hi, float(d[k]))))
@@ -1895,6 +1969,14 @@ def main():
         raise
     init_db()
     trainer = Trainer(BRAIN_PATH, get_corpus, get_lr, record_growth, on_vocab=on_vocab)
+    import convo_data
+    trainer.topic_items = convo_data.topic_items()
+    if trainer.topic is None:
+        try:
+            from brain import topic_test
+            trainer.topic = topic_test(trainer.model, trainer.tok, trainer.topic_items, trainer.device)
+        except Exception as e:
+            print("[topic]", e)
     s = trainer.snapshot()
     url = f"http://127.0.0.1:{PORT}"
     dev = {"mps": "GPU ของ Mac (Metal)", "cuda": "การ์ดจอ NVIDIA", "cpu": "CPU"}[trainer.device]

@@ -326,6 +326,7 @@ details.ref summary{cursor:pointer;font-size:13px;color:var(--sand)}
       <div class="ctl">
         <label>อุณหภูมิ T <b id="vT"></b><input type="range" id="sT" min="0.05" max="2" step="0.05"></label>
         <label>top-k <b id="vK"></b><input type="range" id="sK" min="1" max="60" step="1"></label>
+        <label title="แซนด์ทารกคิดคำตอบกี่แบบก่อนเลือกแบบที่เข้ากับบทสนทนาที่สุด (1 = ตอบแบบแรกที่สุ่มได้)">คิดกี่แบบ <b id="vN"></b><input type="range" id="sN" min="1" max="12" step="1"></label>
         <label>ช้าลง (มิลลิวิ) <b id="vD"></b><input type="range" id="sD" min="0" max="600" step="10"></label>
       </div>
       <div class="status" id="liveStatus">ส่งข้อความหาแซนด์ แล้วดูมันคิดทีละตัวอักษรตรงนี้ หรือกด 🔬 ใต้คำตอบเก่าเพื่อย้อนดู</div>
@@ -406,6 +407,7 @@ details.ref summary{cursor:pointer;font-size:13px;color:var(--sand)}
     <div id="train" class="tab">
       <div class="stats" id="tStats"></div>
       <div class="err" id="tErr"></div>
+      <p class="muted" id="tTopic" style="font-size:12.5px;line-height:1.6"></p>
       <h3>loss ระหว่างฝึก (ยิ่งต่ำยิ่งเก่ง)</h3>
       <canvas class="chart" id="lossChart" style="height:170px"></canvas>
       <div class="legend" style="gap:14px"><span style="color:var(--sand)">━ ตอนฝึก</span><span style="color:var(--teal)">━ ข้อความที่ไม่เคยเห็น</span><span style="color:var(--rose)">┅ เดาสุ่ม</span></div>
@@ -890,6 +892,7 @@ function bindSlider(id, key, fmt){
 bindSlider('T', 'temperature', v => v.toFixed(2));
 bindSlider('K', 'top_k', v => v);
 bindSlider('D', 'delay', v => v);
+bindSlider('N', 'baby_candidates', v => v);
 
 /* ---------- tabs ---------- */
 function switchTab(t){
@@ -933,6 +936,7 @@ function render(){
     $('#sT').value = st.temperature; $('#vT').textContent = st.temperature.toFixed(2);
     $('#sK').value = st.top_k; $('#vK').textContent = st.top_k;
     $('#sD').value = st.delay; $('#vD').textContent = st.delay;
+    $('#sN').value = st.baby_candidates; $('#vN').textContent = st.baby_candidates;
   }
   renderTrain(); renderFormulas(); renderData(); renderBrain(); renderWeb(); rdStatus();
   $('#tlList').innerHTML = S.events.map(e => `<div class="ev ${e.kind}"><div>${esc(e.title)}</div><div class="meta">${when(e.ts)}</div></div>`).join('');
@@ -946,9 +950,12 @@ function renderTrain(){
     ['ก้าวที่ฝึก', fmtNum(T.step)], ['loss ตอนฝึก', T.loss != null ? T.loss.toFixed(3) : '–'],
     ['loss ข้อความใหม่', T.val_loss != null ? T.val_loss.toFixed(3) : '–'],
     ['เก่งกว่าเดาสุ่ม', fmtNum(S.skill,1) + '%'], ['อ่านไปแล้ว', fmtNum(T.tokens/1e6,2) + ' ล้านตัว'],
+    ['คุยต่อเรื่องได้', T.topic != null ? fmtNum(T.topic,0) + '%' : '–'],
     ['ความเร็ว', T.running ? fmtNum(T.speed,1) + ' ก้าว/วิ' : dev],
   ].map(([k,v]) => `<div class="stat"><div class="v">${v}</div><div class="k">${k}</div></div>`).join('');
   $('#tErr').textContent = T.error ? 'การฝึกหยุดเพราะผิดพลาด: ' + T.error : '';
+  $('#tTopic').innerHTML = `<b>คุยต่อเรื่องได้</b> = ข้อสอบ ${40} ข้อ: บทสนทนาที่คุยมาแล้ว 1–3 รอบ + คำตอบที่ถูก + คำตอบจากอีกเรื่อง · ได้คะแนนเมื่อ log p(คำตอบที่ถูก | บทสนทนา) &gt; log p(คำตอบเรื่องอื่น | บทสนทนา) · เดาสุ่มได้ 50% · วัดทุก 500 ก้าว`
+    + (T.topic_hist?.length ? ' · ' + T.topic_hist.slice(-6).map(([s,v]) => `ก้าว ${fmtNum(s)}: <b>${v}%</b>`).join(' → ') : '');
 
   const L = T.loss ?? rl, V = T.vocab;
   $('#lossMath').innerHTML = `${MV('L')}${OP('=')}−${FR(MN(1), MV('N'))}${SIG('i')}ln${MV('p')}${PA(SUB(MV('ตัวที่ถูก'),'i'))}${EQ(fmtNum(L,3))}`;
