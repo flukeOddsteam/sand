@@ -11,6 +11,7 @@ import json
 import math
 import os
 import queue
+import random
 import re
 import sqlite3
 import sys
@@ -75,6 +76,13 @@ BUILTIN_FORMULAS = [
     ("p_chat", "สัดส่วนบทสนทนาในทุกก้าวฝึก", "0.5", "",
      "ทุกก้าว ครูฝึกหยิบข้อความจากกองบทสนทนา (บทเรียนตั้งต้น สิ่งที่สอน 👍 บทสนทนาที่ไปเรียนมา สำเนาพิมพ์ผิด) "
      "ตามสัดส่วนนี้ ที่เหลือหยิบจากข้อมูลทั้งหมด · กันไม่ให้บทความยาวๆ จากเว็บกลบการหัดคุย · 0 = แบบเดิม", "train"),
+    ("min_conf", "ความมั่นใจขั้นต่ำก่อนตอบ", "-0.6", "",
+     "ถ้าคำตอบที่ดีที่สุดได้คะแนนมั่นใจ (1/N) Σ ln p(ตัวอักษร | บทสนทนา) ต่ำกว่านี้ แซนด์ทารกจะบอกว่ายังไม่เข้าใจ "
+     "แล้วขอให้สอน แทนการเดามั่ว · คำตอบเรื่องที่เคยเรียนมักได้ราว −0.01 ถึง −0.2 · ตั้ง −99 = ตอบทุกครั้ง", "train"),
+    ("max_new", "ประโยคใหม่สำหรับแซนด์ได้มากสุดเท่าไร", "3.5", "",
+     "ความแปลกใหม่ของสิ่งที่คุณพิมพ์ = −(1/N) Σ ln p(ตัวอักษรที่คุณพิมพ์ | บทสนทนาก่อนหน้า) "
+     "ถ้าเกินค่านี้ แปลว่าแซนด์ทารกไม่เคยเห็นอะไรคล้ายๆ นี้ จะบอกว่ายังไม่เข้าใจแล้วขอให้สอน "
+     "· ประโยคที่คุ้นเคยมักได้ 0.3–1.5 · ประโยคที่ไม่เคยเจอได้ 4–7 · ตั้ง 99 = ตอบทุกครั้ง", "train"),
     ("rerank_b", "น้ำหนักความเฉพาะเรื่อง β (ตอนเลือกคำตอบ)", "0", "",
      "แซนด์ทารกคิดคำตอบหลายแบบแล้วให้คะแนน  คะแนน = log p(คำตอบ | บทสนทนา) − β · log p(คำตอบ) "
      "β สูง = ชอบคำตอบที่ต่อจากสิ่งที่คุณพูดจริงๆ (ไม่ใช่ประโยคกลางๆ ที่ตอบอะไรก็ได้) · 0 = เลือกแค่คำตอบที่มั่นใจที่สุด", "train"),
@@ -1558,12 +1566,30 @@ def _stream_chat(user_text, write):
             "prompt_chars": len(prompt), "vocab": len(t.tok)}
     n_cand = max(1, min(12, gs["baby_candidates"]))
     t0 = time.time()
-    chosen = None
-    if n_cand > 1:
-        chosen, cands = pick_reply(t, ids, n_cand, gs)
-        info["candidates"] = cands
-        if chosen is not None:
-            write({"note": rerank_note(cands)})
+    chosen, cands = pick_reply(t, ids, n_cand, gs)
+    info["candidates"] = cands
+    res = core()[1]
+    floor, max_new = res.get("min_conf", -0.6), res.get("max_new", 3.5)
+    best = cands[0]["lp_ctx"] if cands else -99.0
+    cut = prompt.rfind(USER_TAG)
+    with t.lock:
+        newness = -reply_logp(t.model, t.tok, t.tok.encode(prompt[:cut + len(USER_TAG)]), user_text.replace("\n", " "),
+                              t.device) if cut >= 0 else 0.0
+    info["newness"] = newness
+    why = None
+    if newness > max_new:
+        why = f"ประโยคนี้ใหม่สำหรับแซนด์ {newness:.2f} เกินเกณฑ์ {max_new:g} (สูตร max_new) — ยังไม่เคยเรียนอะไรคล้ายๆ นี้"
+    elif best < floor:
+        why = f"มั่นใจสุดแค่ {best:.2f} ต่ำกว่าเกณฑ์ {floor:g} (สูตร min_conf)"
+    if why:
+        # ไม่เข้าใจ → บอกตรงๆ แล้วขอให้สอน (แบบที่คนทำ) แทนการพูดประโยคมั่วๆ
+        info["unsure"] = {"best": best, "floor": floor, "newness": newness, "max_new": max_new}
+        chosen = random.choice(UNSURE)
+        write({"note": f"🤔 {why} จึงบอกว่ายังไม่เข้าใจแทนการเดา"
+                       + (f" · คำตอบที่เกือบพูด: “{cands[0]['text'][:40]}”" if cands else "")
+                       + " · กด ✏️ สอนคำตอบที่ถูก แล้วแซนด์จะเรียนตอนฝึก"})
+    elif chosen is not None and len(cands) > 1:
+        write({"note": rerank_note(cands)})
     write({"start": info, "prompt": prompt})
     tokens, out = [], ""
     forced = None if chosen is None else t.tok.encode(chosen + "\n")
@@ -1593,6 +1619,12 @@ def _stream_chat(user_text, write):
       (aid, json.dumps({"info": info, "prompt": prompt, "tokens": tokens, "summary": summary}, ensure_ascii=False)))
     write({"done": True, "id": aid, "summary": summary})
     record_growth()
+
+
+UNSURE = ["อันนี้ผมยังไม่เข้าใจเลยครับ ช่วยสอนผมหน่อยได้ไหม",
+          "ผมยังตอบเรื่องนี้ไม่ได้ครับ ถ้าสอนผม ผมจะจำไว้",
+          "ยังไม่รู้เรื่องนี้เลยครับ สอนผมหน่อยนะ",
+          "ผมไม่แน่ใจครับ ไม่อยากตอบมั่ว ช่วยบอกผมหน่อยได้ไหมว่าควรตอบยังไง"]
 
 
 def pick_reply(t, ids, n, gs):
