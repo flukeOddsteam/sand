@@ -36,10 +36,78 @@ MODELS = {
     "qwen3-1.7b": {"repo": "Qwen/Qwen3-1.7B", "label": "Qwen3 1.7B", "params": "1.7 พันล้าน",
                    "size_gb": 4.1, "ram_gb": 8, "think": True,
                    "desc": "แนะนำสำหรับ RAM 8GB · ฉลาดกว่า 0.6B มาก · คิดก่อนตอบได้ (เห็นความคิดสด)"},
+    "qwen3-4b": {"repo": "Qwen/Qwen3-4B", "label": "Qwen3 4B", "params": "4 พันล้าน",
+                 "size_gb": 8.0, "ram_gb": 16, "think": True,
+                 "desc": "ฉลาดกว่า 1.7B ชัดเจน (คณิต เหตุผล โค้ด) · คิดก่อนตอบได้ · เครื่อง 8GB บีบให้พอดีอัตโนมัติ"},
     "typhoon-4b": {"repo": "typhoon-ai/typhoon2.5-qwen3-4b", "label": "Typhoon 2.5 (Qwen3 4B)", "params": "4 พันล้าน",
                    "size_gb": 8.1, "ram_gb": 16, "think": False,
-                   "desc": "ปรับจูนภาษาไทยโดยเฉพาะ เก่งที่สุดในชุดนี้ · ต้อง RAM 16GB (ถ้าน้อยกว่าจะบีบเป็น int8 ช้าและเครื่องตึง)"},
+                   "desc": "ปรับจูนภาษาไทยโดยเฉพาะ คุยไทยเป็นธรรมชาติที่สุด · เครื่อง 8GB บีบให้พอดีอัตโนมัติ"},
+    "qwen3-8b": {"repo": "Qwen/Qwen3-8B", "label": "Qwen3 8B", "params": "8 พันล้าน",
+                 "size_gb": 16.4, "ram_gb": 24, "think": True,
+                 "desc": "ฉลาดที่สุดในชุด · เหมาะกับการ์ดจอ NVIDIA 8GB ขึ้นไป (เช่น RTX 5050) โดยบีบเป็น int4 · ดาวน์โหลด 16GB"},
 }
+
+# ---------------------------------------------------------------- บีบน้ำหนักให้พอดีหน่วยความจำ
+# ขนาดหลังบีบ เทียบกับไฟล์ bf16 (ชั้น embedding ยังเก็บแบบละเอียดกว่า จึงไม่ลดเต็มที่)
+QUANT_FACTOR = {"bf16": 1.0, "int8": 0.55, "int4": 0.33}
+QUANT_LABEL = {"bf16": "bf16 (เต็ม)", "int8": "int8 (บีบครึ่ง)", "int4": "int4 (บีบเหลือ ~⅓)"}
+INT4_GROUP = 64
+
+
+def memory_budget():
+    """หน่วยความจำที่สมองโตใช้ได้: การ์ดจอ NVIDIA = VRAM · Mac/CPU = RAM ทั้งเครื่อง (ใช้ร่วมกับระบบ)"""
+    try:
+        if torch.cuda.is_available():
+            return torch.cuda.get_device_properties(0).total_memory / 1e9, "VRAM", True
+    except Exception:
+        pass
+    ram = system_ram_gb()
+    return ram, "RAM", False
+
+
+def plan_quant(key, force=None):
+    """เลือกวิธีเก็บน้ำหนักที่ละเอียดที่สุดที่ยังพอดีเครื่อง
+    ใช้ได้ = VRAM − 1.2 GB (การ์ดจอ) หรือ RAM × 0.6 (ต้องเหลือให้ระบบและแอปอื่น)"""
+    m = MODELS[key]
+    total, kind, gpu = memory_budget()
+    if total is None:
+        return {"mode": force or "bf16", "est_gb": m["size_gb"], "usable_gb": None, "fits": True, "spare_gb": None,
+                "kind": kind, "total_gb": None}
+    usable = total - 1.2 if gpu else total * 0.6
+    mode = force if force in QUANT_FACTOR else None
+    if not mode:
+        mode = next((q for q in ("bf16", "int8", "int4") if m["size_gb"] * QUANT_FACTOR[q] <= usable), "int4")
+    est = m["size_gb"] * QUANT_FACTOR[mode]
+    return {"mode": mode, "est_gb": round(est, 1), "usable_gb": round(usable, 1), "fits": est <= usable,
+            "spare_gb": round(usable - est, 1), "kind": kind, "total_gb": round(total, 1)}
+
+
+def quantize8(t):
+    """int8 ต่อแถว: s = max|w| / 127 · q = round(w / s) ∈ [−127, 127] · w ≈ s·q"""
+    tf = t.float()
+    scale = tf.abs().amax(dim=1).clamp_min(1e-8) / 127.0
+    q = torch.round(tf / scale[:, None]).clamp(-127, 127).to(torch.int8)
+    return q, scale
+
+
+def quantize4(t, group=INT4_GROUP):
+    """int4 ทีละกลุ่ม 64 ตัว: s = max|w| / 7 · q = round(w / s) + 8 ∈ [0, 15] · w ≈ s·(q − 8)
+    เก็บ 2 ตัวใน 1 ไบต์: ไบต์ = q₀ + 16·q₁"""
+    out, inn = t.shape
+    tf = t.float().reshape(out, inn // group, group)
+    scale = tf.abs().amax(dim=2).clamp_min(1e-8) / 7.0
+    q = torch.round(tf / scale[..., None]).clamp(-8, 7) + 8
+    packed = (q[..., 0::2] + 16 * q[..., 1::2]).to(torch.uint8)
+    return packed, scale
+
+
+def dequant4(packed, scale, dtype):
+    """แกะ int4 กลับ (ใช้แค่บวกลบคูณหาร จึงรันได้ทั้ง NVIDIA, Mac และ CPU)"""
+    p = packed.to(dtype)
+    hi = torch.floor(p / 16)
+    lo = p - hi * 16
+    q = torch.stack((lo, hi), dim=-1).reshape(*packed.shape[:-1], packed.shape[-1] * 2)
+    return ((q - 8) * scale[..., None].to(dtype)).reshape(packed.shape[0], -1)
 CONFIG_FILES = ["config.json", "tokenizer.json"]
 OPTIONAL_FILES = ["tokenizer_config.json", "generation_config.json"]
 
@@ -186,8 +254,9 @@ def read_safetensors(path):
 
 # ---------------------------------------------------------------- สมอง Qwen3
 class Qwen3:
-    def __init__(self, path, device=None, dtype=None, quant8=False, progress=None):
+    def __init__(self, path, device=None, dtype=None, quant8=False, progress=None, quant=None):
         self.path = path
+        self.quant = quant or ("int8" if quant8 else "bf16")
         with open(os.path.join(path, "config.json")) as f:
             c = json.load(f)
         self.c = c
@@ -201,35 +270,72 @@ class Qwen3:
         self.eps = c.get("rms_norm_eps", 1e-6)
         self.theta = c.get("rope_theta", 1e6)
         self.tied = c.get("tie_word_embeddings", False)
-        self.quant8 = quant8
+        self.quant8 = self.quant == "int8"
         self.W = {}
         self.n_params = 0
+        self.bytes = 0
         files = weight_files(path)
         for i, f in enumerate(files):
             for name, t in read_safetensors(os.path.join(path, f)):
                 name = name[6:] if name.startswith("model.") else name
                 self.n_params += t.numel()
-                if quant8 and t.dim() == 2 and "embed_tokens" not in name and name != "lm_head.weight":
-                    tf = t.float()
-                    scale = tf.abs().amax(dim=1).clamp_min(1e-8) / 127.0          # ต่อแถว (ต่อช่องผลลัพธ์)
-                    q = torch.round(tf / scale[:, None]).clamp(-127, 127).to(torch.int8)
-                    self.W[name] = (q.to(self.device), scale.to(self.device, self.dtype))
-                else:
-                    self.W[name] = t.to(self.device, self.dtype).clone() if self.device == "cpu" else t.to(self.device, self.dtype)
+                self.W[name] = self._store(name, t)
             if progress:
                 progress((i + 1) / len(files))
         if "lm_head.weight" not in self.W:
             self.W["lm_head.weight"] = self.W["embed_tokens.weight"]
+        seen = set()
+        for w in self.W.values():                    # หน่วยความจำที่ใช้จริง (นับ tensor ที่ใช้ร่วมกันครั้งเดียว)
+            for p in (w[1:] if isinstance(w, tuple) else (w,)):
+                if id(p) not in seen:
+                    seen.add(id(p))
+                    self.bytes += p.numel() * p.element_size()
         inv = 1.0 / (self.theta ** (torch.arange(0, self.hd, 2, dtype=torch.float32) / self.hd))
         self.inv_freq = inv.to(self.device)
 
+    def _store(self, name, t):
+        """เก็บน้ำหนักแต่ละชิ้นตามวิธีบีบที่เลือก
+        bf16: เก็บตรงๆ · int8: เมทริกซ์ทุกตัวยกเว้น embedding/lm_head
+        int4: เมทริกซ์ในชั้นคิดเป็น int4 ส่วน embedding/lm_head (ตัวแปลงคำ↔เวกเตอร์ อ่อนไหวที่สุด) เป็น int8"""
+        dev = self.device
+        big = t.dim() == 2
+        edge = "embed_tokens" in name or name == "lm_head.weight"
+        mode = self.quant
+        if not big or mode == "bf16" or (mode == "int8" and edge):
+            return t.to(dev, self.dtype).clone() if dev == "cpu" else t.to(dev, self.dtype)
+        use4 = mode == "int4" and not edge and t.shape[1] % INT4_GROUP == 0
+        try:                                         # บีบบนการ์ดจอ/ชิป Mac เร็วกว่า CPU มาก
+            src = t.to(dev) if dev != "cpu" else t
+            q, s = quantize4(src) if use4 else quantize8(src)
+        except Exception:
+            q, s = quantize4(t) if use4 else quantize8(t)
+        return ("i4" if use4 else "i8", q.to(dev), s.to(dev, self.dtype))
+
     # ----- ชิ้นส่วนสูตร
+    CHUNK = 16384                                    # แถวต่อครั้งตอนแกะน้ำหนักที่บีบไว้ (กันหน่วยความจำพุ่ง)
+
     def lin(self, x, name):
         w = self.W[name]
-        if isinstance(w, tuple):                     # int8: y = (x·W8ᵀ) ⊙ scale
-            q, s = w
+        if not isinstance(w, tuple):
+            return x @ w.T
+        kind, q, s = w
+        if q.shape[0] > self.CHUNK:                  # เช่น lm_head 151,936 แถว: แกะทีละช่วงแล้วต่อกัน
+            return torch.cat([self._qmul(x, kind, q[i:i + self.CHUNK], s[i:i + self.CHUNK])
+                              for i in range(0, q.shape[0], self.CHUNK)], dim=-1)
+        return self._qmul(x, kind, q, s)
+
+    def _qmul(self, x, kind, q, s):
+        if kind == "i8":                             # int8: y = (x·W8ᵀ) ⊙ s
             return (x @ q.to(self.dtype).T) * s
-        return x @ w.T
+        return x @ dequant4(q, s, self.dtype).T      # int4: y = x·(s·(q − 8))ᵀ
+
+    def embed(self, ids):
+        w = self.W["embed_tokens.weight"]
+        idx = torch.tensor(ids, device=self.device)
+        if not isinstance(w, tuple):
+            return w[idx]
+        _, q, s = w                                  # int8 ต่อแถว: แกะเฉพาะแถวของคำที่ใช้
+        return q[idx].to(self.dtype) * s[idx][:, None]
 
     def rms(self, x, w):
         xf = x.float()
@@ -248,7 +354,7 @@ class Qwen3:
     def forward(self, ids, pos0, cache, trace=False):
         """ids: โทเคนใหม่ (list), pos0: ตำแหน่งเริ่ม, cache: K/V ของโทเคนก่อนหน้า → logits ของตำแหน่งสุดท้าย"""
         T = len(ids)
-        x = self.W["embed_tokens.weight"][torch.tensor(ids, device=self.device)]
+        x = self.embed(ids)
         pos = torch.arange(pos0, pos0 + T, device=self.device, dtype=torch.float32)
         freqs = torch.outer(pos, self.inv_freq)
         emb = torch.cat((freqs, freqs), dim=-1)

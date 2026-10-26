@@ -499,7 +499,9 @@ details.ref summary{cursor:pointer;font-size:13px;color:var(--sand)}
         <h4 style="margin:14px 0 4px">👩‍🏫 ให้สมองโตเป็นครู แต่งบทสนทนาสอนแซนด์ทารก</h4>
         <div class="say">สมองโต (Qwen3) คุยแบบมนุษย์ได้อยู่แล้ว ให้มันแต่งบทสนทนาสั้นๆ หลายเรื่อง (กินข้าว เหนื่อยงาน เกม ปลอบใจ …)
           ในภาษาที่ติ๊กไว้ด้านบน บางบทผู้ใช้พิมพ์ผิดด้วย แล้วแซนด์ทารกเอาไปฝึก · ไม่ต้องใช้อินเทอร์เน็ต
-          · ต้องโหลดสมองโตก่อน และสมองยิ่งใหญ่ บทสนทนายิ่งเป็นธรรมชาติ (ภาษาไทยของ Qwen3 0.6B ยังไม่ค่อยดี)</div>
+          · ต้องโหลดสมองโตก่อน และสมองยิ่งใหญ่ บทสนทนายิ่งเป็นธรรมชาติ (ภาษาไทยของ Qwen3 0.6B ยังไม่ค่อยดี)
+          · 📝 ข้อความไหนที่แซนด์ทารกบอกว่า “ยังไม่เข้าใจ” จะถูกจดไว้ แล้วครูตอบให้ก่อนแต่งเรื่องใหม่</div>
+        <div id="tcAsks" class="say"></div>
         <div class="abtn"><label style="margin:0;display:flex;gap:6px;align-items:center">จำนวนเรื่อง<input type="number" id="tcN" min="1" max="500" value="30" style="width:90px"></label>
           <button class="btn primary" id="tcBtn">ให้สมองโตสอน</button><button class="btn hidden" id="tcStop">หยุด</button>
           <span class="err" id="tcErr"></span></div>
@@ -572,6 +574,15 @@ details.ref summary{cursor:pointer;font-size:13px;color:var(--sand)}
       <option value="assistant">📘 ผู้ช่วย — ตอบละเอียดเป็นขั้นตอน</option></select></label>
     <div class="say" id="bMem" style="margin:0;align-self:end"></div>
   </div>
+  <div class="two" style="margin-top:10px">
+    <label style="margin:0">บีบน้ำหนัก (ประหยัดหน่วยความจำ)<select id="bQuant">
+      <option value="auto">อัตโนมัติ — ละเอียดที่สุดที่พอดีเครื่อง</option>
+      <option value="bf16">bf16 — เต็ม แม่นที่สุด ใช้หน่วยความจำมากสุด</option>
+      <option value="int8">int8 — w ≈ s·q, q ∈ [−127, 127] ต่อแถว</option>
+      <option value="int4">int4 — w ≈ s·(q − 8), q ∈ [0, 15] ทีละ 64 ตัว</option></select></label>
+    <label style="display:flex;align-items:center;gap:8px;margin:0;align-self:end"><input type="checkbox" id="bLearn" style="width:auto;display:inline;margin:0"> 🌱 ให้แซนด์ทารกเรียนจากที่คุยเล่นกับสมองโต</label>
+  </div>
+  <div class="say">เปลี่ยนวิธีบีบแล้วต้องกด “ใช้สมองนี้” ใหม่ · ยิ่งบีบมาก ยิ่งใช้หน่วยความจำน้อยและโหลดสมองใหญ่ได้ แต่แม่นลดลงเล็กน้อย</div>
   <div class="say">โหมดคุยแบบมนุษย์: ข้อความคุยเล่นสั้นๆ จะตอบทันทีโดยไม่คิดในใจก่อน (เร็วเหมือนแชท) · ถ้าขอให้อธิบาย คำนวณ หรือเขียนโค้ด จะคิดก่อนตอบตามปกติ · จำบทสนทนาย้อนหลังราว 10 รอบ และจำชื่อคุณเมื่อคุณบอก</div>
   <div class="say">สมองโตใช้น้ำหนักที่ฝึกมาแล้วจากโมเดลเปิด แต่คิดด้วยเครื่องยนต์ <code>bigbrain.py</code> ที่เราเขียนเองทุกสูตร · สิ่งที่คุณสอนในแท็บข้อมูลฝึกจะถูกส่งให้สมองโตอ่านก่อนตอบทุกครั้ง และข้อความยาวที่ป้อนไว้จะถูกค้นหาส่วนที่เกี่ยวข้องมาให้อ่านด้วย</div>
   <div class="mfoot"><button class="btn" id="bClose">ปิด</button></div>
@@ -1213,6 +1224,12 @@ function renderConvo(C, T){
       + (TC.last ? `<details class="ref"><summary>บทสนทนาล่าสุดที่แต่ง</summary><pre style="white-space:pre-wrap;font-size:12.5px;color:var(--muted)">${esc(TC.last)}</pre></details>` : '')
       + (TC.error ? `<div class="err">${esc(TC.error)}</div>` : '');
   }
+  const AK = C.asks;
+  if(AK) $('#tcAsks').innerHTML = `📝 คำถามที่แซนด์ทารกยังไม่เข้าใจ รอครูตอบ <b>${fmtNum(AK.pending)}</b> ข้อ · ตอบแล้ว ${fmtNum(AK.answered)} ข้อ`
+    + ` · 🗣️ บทเรียนจากที่คุณคุยกับสมองโต ${fmtNum(AK.bigchat)} คู่`
+    + (AK.recent.length ? `<details class="ref"><summary>ดูคำถามล่าสุด</summary>${AK.recent.map(r => `<div class="item qa"><b>ถาม:</b> ${esc(r.q)}<br><b>ครูตอบ:</b> ${r.a ? esc(r.a) : '<span class="muted">รอสมองโต</span>'}</div>`).join('')}</details>` : '');
+  if(TC && TC.active && TC.asks_goal && TC.asks_done < TC.asks_goal)
+    $('#tcStatus').innerHTML = `${esc(TC.big || '')} กำลังตอบคำถามที่แซนด์ทารกจดไว้ ${TC.asks_done + 1}/${TC.asks_goal}<div class="cvbar"><i style="width:${100 * TC.asks_done / TC.asks_goal}%"></i></div>`;
   if(T) $('#typoEx').textContent = T.n ? `รอบนี้ทำไว้ ${fmtNum(T.n)} ชุด เช่น\n\n` + T.examples.join('\n') : 'ยังไม่ได้สร้าง (จะสร้างตอนเริ่มรอบฝึก)';
 }
 $('#cvBtn').onclick = async () => {
@@ -1418,7 +1435,8 @@ function renderBrain(){
     ? (L ? `🎓 <b>${esc(L.label)}</b>` : ld.state === 'loading' ? `⏳ กำลังโหลดสมอง ${Math.round(ld.progress*100)}%` : '🎓 <b>สมองโต</b> (ยังไม่โหลด)')
     : '🌱 <b>แซนด์ทารก</b>';
   if($('#bmodal').classList.contains('hidden')) return;
-  const ram = G.ram_gb ? `เครื่องนี้มี RAM ${G.ram_gb.toFixed(0)} GB` : '';
+  const M = G.mem || {};
+  const ram = M.total_gb ? (M.gpu ? `การ์ดจอมี VRAM ${M.total_gb} GB` : `เครื่องนี้มี RAM ${M.total_gb} GB`) : '';
   $('#bList').innerHTML = `
     <div class="bopt ${mode === 'baby' ? 'on' : ''}"><h5>🌱 แซนด์ทารก (สมองที่ฝึกเองจากศูนย์)
       ${mode === 'baby' ? '<span class="tag bi">ใช้อยู่</span>' : '<button class="btn sm" data-baby>ใช้สมองนี้</button>'}</h5>
@@ -1429,6 +1447,7 @@ function renderBrain(){
       const loading = ld.state === 'loading' && ld.key === m.key;
       let act = '';
       if(using) act = '<span class="tag bi">ใช้อยู่</span>';
+      else if(L && L.key === m.key) act = `<span class="muted">โหลดค้างไว้</span> <button class="btn sm primary" data-use>ใช้สมองนี้</button>`;
       else if(loading) act = `<span class="muted">กำลังโหลด ${Math.round(ld.progress*100)}%</span>`;
       else if(m.downloaded) act = `<button class="btn sm primary" data-load="${m.key}">ใช้สมองนี้</button>`;
       else if(d.state === 'downloading') act = `<button class="btn sm" data-stop="${m.key}">หยุดชั่วคราว</button>`;
@@ -1437,7 +1456,8 @@ function renderBrain(){
         <div class="muted">${gb(d.done)} / ${gb(d.total)} · ${esc(d.file)}</div>` : loading ? `<div class="prog"><i style="width:${ld.progress*100}%"></i></div>` : '';
       return `<div class="bopt ${using ? 'on' : ''}"><h5>${esc(m.label)} <span>${act}</span></h5>
         <div class="muted">${m.params} น้ำหนัก · ${esc(m.desc)}${m.think ? ' · 💭 คิดก่อนตอบได้' : ''}</div>${pr}
-        ${!m.fits ? `<div class="warn">⚠ แนะนำ RAM ${m.ram_gb} GB ขึ้นไป${m.quant8 ? ' — จะบีบเป็น int8 ให้พอดีเครื่อง แต่จะช้าและเครื่องอาจหน่วง' : ''}</div>` : ''}
+        <div class="muted">💾 เก็บแบบ <b>${esc(m.quant_label)}</b> · ใช้หน่วยความจำ ~${m.est_gb} GB${m.share ? ' · 🌱 แซนด์ทารกฝึกต่อพร้อมกันได้' : ''}</div>
+        ${!m.fits ? `<div class="warn">⚠ ใหญ่เกิน${M.gpu ? 'การ์ดจอ' : 'เครื่อง'}นี้แม้บีบเป็น int4 แล้ว — อาจโหลดไม่ขึ้นหรือช้ามาก</div>` : ''}
         ${d.state === 'error' ? `<div class="warn">${esc(d.error)}</div>` : ''}
         ${loading || ld.state !== 'error' || ld.key !== m.key ? '' : `<div class="warn">โหลดไม่สำเร็จ: ${esc(ld.error)}</div>`}</div>`;
     }).join('');
@@ -1452,14 +1472,21 @@ function renderBrain(){
   $$('#bList [data-load]').forEach(b => b.onclick = async () => {
     b.disabled = true; await post('/api/big/load', {model: b.dataset.load}); loadState(); });
   $$('#bList [data-baby]').forEach(b => b.onclick = async () => {
-    if(S.big.loaded && !confirm('ปิดสมองโตเพื่อคืนหน่วยความจำ แล้วกลับไปใช้แซนด์ทารก?')) return;
+    const L2 = S.big.loaded;
+    if(L2 && L2.share){ await post('/api/settings', {brain: 'baby'}); loadState(); return; }   // พอสำหรับสองสมอง: ไม่ต้องปิด
+    if(L2 && !confirm('ปิดสมองโตเพื่อคืนหน่วยความจำ แล้วกลับไปใช้แซนด์ทารก?')) return;
     await post('/api/big/unload'); loadState(); });
+  $$('#bList [data-use]').forEach(b => b.onclick = async () => { await post('/api/settings', {brain: 'big'}); loadState(); });
+  $('#bLearn').checked = S.settings.learn_big !== false;
+  $('#bQuant').value = G.quant_pref || 'auto';
 }
 $('#brainBtn').onclick = () => { $('#bmodal').classList.remove('hidden'); renderBrain(); };
 $('#bClose').onclick = () => $('#bmodal').classList.add('hidden');
 $('#bmodal').onclick = e => { if(e.target.id === 'bmodal') $('#bmodal').classList.add('hidden'); };
 $('#bThink').onchange = e => post('/api/settings', {think: e.target.checked ? 1 : 0});
 $('#bStyle').onchange = e => post('/api/settings', {style: e.target.value});
+$('#bLearn').onchange = e => post('/api/settings', {learn_big: e.target.checked ? 1 : 0});
+$('#bQuant').onchange = async e => { await post('/api/settings', {big_quant: e.target.value}); loadState(); };
 $('#bMax').onchange = e => post('/api/settings', {max_tokens: +e.target.value});
 
 /* ---------- sand orb ---------- */

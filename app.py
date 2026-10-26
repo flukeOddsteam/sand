@@ -172,6 +172,7 @@ def init_db():
     CREATE TABLE IF NOT EXISTS dialogues(id INTEGER PRIMARY KEY, lang TEXT, text TEXT UNIQUE, source TEXT, ts REAL);
     CREATE TABLE IF NOT EXISTS convos(id INTEGER PRIMARY KEY, lang TEXT, q TEXT, a TEXT, source TEXT, ts REAL,
         UNIQUE(q, a));
+    CREATE TABLE IF NOT EXISTS asks(id INTEGER PRIMARY KEY, q TEXT UNIQUE, ts REAL, a TEXT, answered_ts REAL);
     """)
     old = c.execute("SELECT value FROM settings WHERE key='schema'").fetchone()
     if not old or old[0] != SCHEMA:
@@ -587,6 +588,7 @@ def gen_settings():
         "max_tokens": int(float(setting("max_tokens", "1024"))),
         "baby_candidates": int(float(setting("baby_candidates", "4"))),
         "brain": setting("brain", "baby"),
+        "learn_big": setting("learn_big", "1") == "1",
     }
 
 
@@ -618,6 +620,7 @@ def build_prompt(ctx):
 class BigBrain:
     def __init__(self):
         self.model = self.tok = self.key = None
+        self.share = False                      # สมองโตกับแซนด์ทารกใช้หน่วยความจำพร้อมกันได้ไหม
         self.lock = threading.Lock()
         self.dl = {k: {"state": "idle", "done": 0, "total": 0, "file": "", "error": None} for k in B.MODELS}
         self.stops = {}
@@ -626,20 +629,30 @@ class BigBrain:
     def ready(self):
         return self.model is not None
 
+    def plan(self, key):
+        force = setting("big_quant", "auto")
+        return B.plan_quant(key, None if force == "auto" else force)
+
     def status(self):
         ram = B.system_ram_gb()
+        total, kind, gpu = B.memory_budget()
         out = []
         for k, m in B.MODELS.items():
+            pl = self.plan(k)
             out.append({**m, "key": k, "downloaded": B.is_downloaded(MODELS_DIR, k), "dl": self.dl[k],
-                        "fits": ram is None or ram + 0.5 >= m["ram_gb"],
-                        "quant8": k == "typhoon-4b" and ram is not None and ram + 0.5 < m["ram_gb"]})
+                        "fits": pl["fits"], "quant": pl["mode"], "quant_label": B.QUANT_LABEL[pl["mode"]],
+                        "est_gb": pl["est_gb"], "quant8": pl["mode"] == "int8",
+                        "share": pl["spare_gb"] is not None and pl["spare_gb"] >= SHARE_GB})
         info = None
         if self.model:
             mm = self.model
             info = {"key": self.key, "label": B.MODELS[self.key]["label"], "params": mm.n_params, "layers": mm.L,
                     "heads": mm.H, "kv": mm.KV, "d": mm.d, "hd": mm.hd, "device": mm.device,
-                    "dtype": str(mm.dtype).replace("torch.", ""), "quant8": mm.quant8}
-        return {"models": out, "loaded": info, "load": self.load_state, "ram_gb": ram}
+                    "dtype": str(mm.dtype).replace("torch.", ""), "quant8": mm.quant8, "quant": mm.quant,
+                    "mem_gb": round(mm.bytes / 1e9, 2), "share": self.share}
+        return {"models": out, "loaded": info, "load": self.load_state, "ram_gb": ram,
+                "mem": {"kind": kind, "total_gb": total and round(total, 1), "gpu": gpu},
+                "quant_pref": setting("big_quant", "auto")}
 
     def download(self, key):
         if key not in B.MODELS or self.dl[key]["state"] == "downloading":
@@ -666,21 +679,24 @@ class BigBrain:
 
         def job():
             try:
-                if trainer.running:
-                    trainer.stop()              # หยุดฝึกแซนด์ทารก เพื่อให้แรมพอสำหรับสมองโต
+                pl = self.plan(key)
+                share = pl["spare_gb"] is not None and pl["spare_gb"] >= SHARE_GB
+                if trainer.running and not share:
+                    trainer.stop()              # หน่วยความจำไม่พอให้ทั้งสองสมอง → หยุดฝึกแซนด์ทารกชั่วคราว
                     set_setting("auto_train", "0")
                 self.unload()
-                ram = B.system_ram_gb()
-                q8 = key == "typhoon-4b" and ram is not None and ram + 0.5 < B.MODELS[key]["ram_gb"]
-                model = B.Qwen3(B.model_dir(MODELS_DIR, key), quant8=q8,
+                model = B.Qwen3(B.model_dir(MODELS_DIR, key), quant=pl["mode"],
                                 progress=lambda f: self.load_state.update(progress=f))
                 tok = B.TokenizerWrap(B.model_dir(MODELS_DIR, key))
                 with self.lock:
-                    self.model, self.tok, self.key = model, tok, key
+                    self.model, self.tok, self.key, self.share = model, tok, key, share
+                if share:
+                    say(f"หน่วยความจำเหลือ {pl['spare_gb']} GB — แซนด์ทารกฝึกต่อไปพร้อมกับสมองโตได้", "🧠")
                 set_setting("big_model", key)
                 set_setting("brain", "big")
                 self.load_state.update(state="ready", progress=1.0)
-                event("brain", f"แซนด์ได้สมองโต: {B.MODELS[key]['label']} ({model.n_params / 1e9:.1f} พันล้านน้ำหนัก)")
+                event("brain", f"แซนด์ได้สมองโต: {B.MODELS[key]['label']} ({model.n_params / 1e9:.1f} พันล้านน้ำหนัก"
+                               f" · {model.quant} · ใช้หน่วยความจำ {model.bytes / 1e9:.1f} GB)")
             except Exception as e:
                 import traceback
                 traceback.print_exc()
@@ -690,16 +706,20 @@ class BigBrain:
     def unload(self):
         with self.lock:
             self.model = self.tok = self.key = None
+            self.share = False
         import gc
         gc.collect()
         try:
             import torch
             if torch.backends.mps.is_available():
                 torch.mps.empty_cache()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
         except Exception:
             pass
 
 
+SHARE_GB = 1.5          # เหลือหน่วยความจำเท่านี้หลังโหลดสมองโต → ฝึกแซนด์ทารกต่อพร้อมกันได้
 BIG = BigBrain()
 
 SYS_BASE = (
@@ -840,7 +860,7 @@ def _stream_big(user_text, write):
             "device": m.device, "layers": m.L, "heads": m.H, "kv": m.KV, "d": m.d, "hd": m.hd,
             "step": trainer.step, "T": T, "top_k": top_k, "top_p": top_p, "rep": rp, "think": think_on,
             "prompt_tokens": len(ids), "prompt_chars": len(ids), "taught": n_taught, "retrieved": found,
-            "quant8": m.quant8, "vocab": tk.vocab,
+            "quant8": m.quant8, "quant": m.quant, "vocab": tk.vocab,
             "web": [{"title": p["title"], "url": p["url"]} for p in web_used]}
     write({"start": info, "prompt": prompt[-4000:]})
     stops = {i for i in (tk.id("<|im_end|>"), tk.id("<|endoftext|>")) if i is not None}
@@ -892,6 +912,10 @@ def _stream_big(user_text, write):
                "avg_H": sum(t["H"] for t in tokens) / len(tokens) if tokens else 0,
                "think_tokens": len(buf["think"])}
     aid = x("INSERT INTO messages(role,content,ts) VALUES('assistant',?,?)", (answer, time.time()))
+    if gs["learn_big"] and casual and not web_used and 2 <= len(answer) <= 240 and "\n" not in answer:
+        # คุยเล่นกับสมองโต = บทเรียนให้แซนด์ทารก (ประโยคยาว/มีลิงก์/หลายบรรทัด สมองทารกจำไม่ไหว จึงไม่เก็บ)
+        if _save_convo(guess_lang(user_text), user_text.replace("\n", " "), answer, "bigchat"):
+            data_changed()
     x("INSERT OR REPLACE INTO traces(msg_id,data) VALUES(?,?)",
       (aid, json.dumps({"info": info, "prompt": prompt[-4000:], "tokens": tokens[:1500],
                         "thinking": shown["think"], "summary": summary}, ensure_ascii=False)))
@@ -1399,7 +1423,8 @@ TEACH_TOPICS = ["greeting and small talk", "food and eating", "school or studyin
 LANG_EN = {"th": "Thai", "en": "English", "ja": "Japanese", "zh": "Simplified Chinese", "ko": "Korean",
            "vi": "Vietnamese", "id": "Indonesian", "es": "Spanish", "fr": "French", "de": "German",
            "ru": "Russian", "pt": "Portuguese"}
-TEACH_JOB = {"active": False, "stop": False, "done": 0, "goal": 0, "added": 0, "error": "", "last": "", "finished": None}
+TEACH_JOB = {"active": False, "stop": False, "done": 0, "goal": 0, "added": 0, "error": "", "last": "", "finished": None,
+             "asks_goal": 0, "asks_done": 0}
 _TURN_RE = re.compile(r"^\s*(?:\*\*)?(ผู้ใช้|User|Person|แซนด์|Sand)(?:\*\*)?\s*[:：](?:\*\*)?\s*(.+)$", re.I)
 
 
@@ -1434,12 +1459,68 @@ def teacher_prompt(lang, topic, rnd):
     return f"<|im_start|>system\n{sys_t}<|im_end|>\n<|im_start|>user\n{usr}<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n"
 
 
+def guess_lang(t):
+    """เดาภาษาจากตัวอักษร (ใช้แยกสถิติบทเรียนตามภาษา)"""
+    for lang, pat in (("th", "[\u0e00-\u0e7f]"), ("ja", "[\u3040-\u30ff]"), ("ko", "[\uac00-\ud7af]"),
+                      ("zh", "[\u4e00-\u9fff]"), ("ru", "[\u0400-\u04ff]")):
+        if re.search(pat, t):
+            return lang
+    return "en"
+
+
+def queue_ask(text):
+    """แซนด์ทารกไม่เข้าใจ → จดคำถามไว้ให้ครู (สมองโต) ตอบทีหลัง"""
+    text = text.replace("\n", " ").strip()
+    if len(text) < 2 or len(text) > 160:
+        return False
+    return bool(x("INSERT OR IGNORE INTO asks(q,ts) VALUES(?,?)", (text, time.time())))
+
+
+def teacher_answer_prompt(question):
+    sys_t = SYS_HUMAN + ("\n\nตอนนี้คุณกำลังสอนแซนด์ทารก (AI ตัวเล็กที่เพิ่งหัดพูด) ว่าควรตอบข้อความนี้อย่างไร "
+                         "ตอบเหมือนกำลังคุยกับผู้ใช้จริง สั้นที่สุดที่ยังเป็นธรรมชาติ ประโยคเดียว ไม่เกิน 30 คำ")
+    return (f"<|im_start|>system\n{sys_t}<|im_end|>\n<|im_start|>user\n{question}<|im_end|>\n"
+            f"<|im_start|>assistant\n<think>\n\n</think>\n\n")
+
+
+def answer_ask(question):
+    """ให้สมองโตตอบคำถามที่แซนด์ทารกไม่เข้าใจ แล้วเก็บเป็นบทเรียน · คืนคำตอบ (หรือ None)"""
+    with BIG.lock:
+        m, tk = BIG.model, BIG.tok
+    if m is None:
+        return None
+    a = B.gen_text(m, tk, teacher_answer_prompt(question), max_new=90, T=0.7, stop_text=("\n",), lock=BIG.lock)
+    a = re.sub(r"^(แซนด์|Sand)\s*[:：]\s*", "", a.strip()).strip(' "“”')
+    if len(a) < 2:
+        return None
+    _save_convo(guess_lang(question), question, a, "ask")
+    x("UPDATE asks SET a=?, answered_ts=? WHERE q=?", (_trim(a, 240), time.time(), question))
+    data_changed()
+    return _trim(a, 240)
+
+
 def teacher_job(langs, n):
     import random as _r
     rnd = _r.Random()
     TEACH_JOB.update(active=True, stop=False, done=0, goal=n, added=0, error="", last="", finished=None)
     say(f"สมองโตเริ่มแต่งบทสนทนาสอนแซนด์ทารก {n} เรื่อง", "👩‍🏫")
     try:
+        pending = q("SELECT q FROM asks WHERE answered_ts IS NULL ORDER BY id LIMIT 300")
+        if pending:
+            say(f"เริ่มจากคำถามที่แซนด์ทารกจดไว้ว่ายังไม่เข้าใจ {len(pending)} ข้อ", "📝")
+        TEACH_JOB.update(asks_goal=len(pending), asks_done=0)
+        for r in pending:
+            if TEACH_JOB["stop"]:
+                break
+            try:
+                a = answer_ask(r["q"])
+            except Exception as e:
+                TEACH_JOB["error"] = f"{type(e).__name__}: {e}"
+                break
+            TEACH_JOB["asks_done"] += 1
+            if a:
+                TEACH_JOB["added"] += 1
+                say(f"ผู้ใช้: {r['q'][:80]} → แซนด์: {a[:80]}", "📝")
         for i in range(n):
             if TEACH_JOB["stop"]:
                 break
@@ -1479,6 +1560,10 @@ def convo_state():
         "teacher": {**{k: v for k, v in TEACH_JOB.items() if k != "stop"}, "big_ready": BIG.ready(),
                     "big": B.MODELS[BIG.key]["label"] if BIG.ready() else None},
         "user_name": setting("user_name"),
+        "asks": {"pending": count("SELECT COUNT(*) n FROM asks WHERE answered_ts IS NULL"),
+                 "answered": count("SELECT COUNT(*) n FROM asks WHERE answered_ts IS NOT NULL"),
+                 "recent": q("SELECT q,a FROM asks ORDER BY id DESC LIMIT 8"),
+                 "bigchat": count("SELECT COUNT(*) n FROM convos WHERE source='bigchat'")},
         "langs": [{"code": k, "name": v[0], "n": count("SELECT COUNT(*) n FROM convos WHERE lang=?", (k,))}
                   for k, v in CONVO_LANGS.items()],
         "sources": {k: v[0] for k, v in CONVO_SOURCES.items()},
@@ -1585,9 +1670,11 @@ def _stream_chat(user_text, write):
         # ไม่เข้าใจ → บอกตรงๆ แล้วขอให้สอน (แบบที่คนทำ) แทนการพูดประโยคมั่วๆ
         info["unsure"] = {"best": best, "floor": floor, "newness": newness, "max_new": max_new}
         chosen = random.choice(UNSURE)
+        queued = queue_ask(user_text)
         write({"note": f"🤔 {why} จึงบอกว่ายังไม่เข้าใจแทนการเดา"
                        + (f" · คำตอบที่เกือบพูด: “{cands[0]['text'][:40]}”" if cands else "")
-                       + " · กด ✏️ สอนคำตอบที่ถูก แล้วแซนด์จะเรียนตอนฝึก"})
+                       + " · กด ✏️ สอนคำตอบที่ถูก แล้วแซนด์จะเรียนตอนฝึก"
+                       + (" · 📝 จดคำถามนี้ไว้ให้สมองโตช่วยสอน" if queued and not BIG.ready() else "")})
     elif chosen is not None and len(cands) > 1:
         write({"note": rerank_note(cands)})
     write({"start": info, "prompt": prompt})
@@ -1619,6 +1706,14 @@ def _stream_chat(user_text, write):
       (aid, json.dumps({"info": info, "prompt": prompt, "tokens": tokens, "summary": summary}, ensure_ascii=False)))
     write({"done": True, "id": aid, "summary": summary})
     record_growth()
+    if why and BIG.ready():
+        # สมองโตอยู่ในหน่วยความจำด้วย → ครูตอบให้ทันที แล้วแซนด์ทารกเก็บไปเรียน
+        try:
+            a = answer_ask(user_text)
+            if a:
+                write({"note": f"👩‍🏫 {B.MODELS[BIG.key]['label']} สอนแซนด์ทารกว่า: “{a}” · เก็บไว้ฝึกแล้ว"})
+        except Exception as e:
+            print("[teacher]", e)
 
 
 UNSURE = ["อันนี้ผมยังไม่เข้าใจเลยครับ ช่วยสอนผมหน่อยได้ไหม",
@@ -1949,6 +2044,12 @@ class Handler(BaseHTTPRequestHandler):
                 set_setting("think", "1" if d["think"] else "0")
             if d.get("style") in ("human", "assistant"):
                 set_setting("style", d["style"])
+            if "learn_big" in d:
+                set_setting("learn_big", "1" if d["learn_big"] else "0")
+            if d.get("big_quant") in ("auto", "bf16", "int8", "int4"):
+                set_setting("big_quant", d["big_quant"])
+            if d.get("brain") == "baby" or (d.get("brain") == "big" and BIG.ready()):
+                set_setting("brain", d["brain"])        # สลับสมองโดยไม่ปิดสมองโต (ใช้เมื่อหน่วยความจำพอ)
             if "forget_name" in d:
                 x("DELETE FROM settings WHERE key='user_name'")
             for k, lo, hi in (("temperature", 0.05, 3), ("top_k", 1, 200), ("delay", 0, 1000), ("max_tokens", 16, 4096),
