@@ -752,7 +752,7 @@ async function send(){
           live.info = d.start;
           const st = d.start;
           $('#liveStatus').innerHTML = st.mode === 'big'
-            ? `สมอง <b>${esc(st.label)}</b> · ${st.layers} ชั้น · ${st.heads} หัว attention (K/V ร่วมกัน ${st.kv} หัว) · อ่าน ${fmtNum(st.prompt_tokens)} โทเคน`
+            ? `สมอง <b>${esc(st.label)}</b> · คิดด้วย <b>${st.device === 'cuda' ? 'การ์ดจอ NVIDIA' : st.device === 'mps' ? 'ชิป Mac' : 'CPU'}</b>${st.quant ? ' (' + esc(st.quant) + ')' : ''} · ${st.layers} ชั้น · ${st.heads} หัว attention (K/V ร่วมกัน ${st.kv} หัว) · อ่าน ${fmtNum(st.prompt_tokens)} โทเคน`
               + (st.taught ? ` · ใช้สิ่งที่สอน ${st.taught} เรื่อง` : '') + (st.retrieved.length ? ` · ค้นเจอจาก: ${esc(st.retrieved.join(', '))}` : '')
             : `สมองขนาด${st.size_label} · ${st.layers} ชั้น · ${st.heads} หัว attention · ฝึกมา <b>${fmtNum(st.step)}</b> ก้าว · อ่านบริบท ${st.prompt_chars} ตัวอักษร`;
         }

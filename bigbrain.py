@@ -397,7 +397,22 @@ class Qwen3:
         return x * cos + rot * sin
 
     def new_cache(self):
-        return [[None, None] for _ in range(self.L)]
+        """ความจำ K/V ต่อชั้น: [K, V, จำนวนที่ใช้] · จองที่ล่วงหน้าทีละ 1,024 โทเคน ไม่ต้องคัดลอกทั้งก้อนทุกโทเคน"""
+        return [[None, None, 0] for _ in range(self.L)]
+
+    def _remember(self, c, k, v):
+        n, T = c[2], k.shape[0]
+        if c[0] is None or n + T > c[0].shape[0]:
+            cap = (n + T + 1023) // 1024 * 1024
+            for j, new in ((0, k), (1, v)):
+                buf = torch.empty((cap,) + tuple(new.shape[1:]), device=new.device, dtype=new.dtype)
+                if c[j] is not None:
+                    buf[:n] = c[j][:n]
+                c[j] = buf
+        c[0][n:n + T] = k
+        c[1][n:n + T] = v
+        c[2] = n + T
+        return c[0][:n + T], c[1][:n + T]
 
     @torch.no_grad()
     def forward(self, ids, pos0, cache, trace=False):
@@ -421,32 +436,31 @@ class Qwen3:
                 q = self.rms(q, self.W[p + "self_attn.q_norm.weight"])
                 k = self.rms(k, self.W[p + "self_attn.k_norm.weight"])
             q, k = self.rope(q, cos, sin), self.rope(k, cos, sin)
-            if cache[i][0] is not None:
-                k = torch.cat((cache[i][0], k), 0)
-                v = torch.cat((cache[i][1], v), 0)
-            cache[i][0], cache[i][1] = k, v
+            k, v = self._remember(cache[i], k, v)
             S = k.shape[0]
-            K = k.repeat_interleave(rep, dim=1).transpose(0, 1)        # (H, S, hd)
-            V = v.repeat_interleave(rep, dim=1).transpose(0, 1)
-            Q = q.transpose(0, 1)                                       # (H, T, hd)
-            if T > 1:
+            if T > 1:                                                   # อ่านคำถามทั้งก้อน (ครั้งเดียว)
+                K = k.repeat_interleave(rep, dim=1).transpose(0, 1)    # (H, S, hd)
+                V = v.repeat_interleave(rep, dim=1).transpose(0, 1)
+                Q = q.transpose(0, 1)                                   # (H, T, hd)
                 o = Fn.scaled_dot_product_attention(Q[None], K[None], V[None], is_causal=(pos0 == 0),
                                                     attn_mask=None if pos0 == 0 else self._mask(T, S, pos0))[0]
+                o = o.transpose(0, 1).reshape(T, self.H * self.hd)
                 if trace:
                     dots = (Q[:, -1:] @ K.transpose(1, 2))[:, 0].float()
                     A = torch.softmax(dots * scale, dim=-1)
-            else:
-                dots = (Q @ K.transpose(1, 2)).float()                  # q·k
+            else:                                                       # ทีละโทเคน: หัว q ที่ใช้ K/V ร่วมกันคูณพร้อมกัน
+                Qg = q[0].view(self.KV, rep, self.hd)                   # (KV, rep, hd) ไม่ต้องคัดลอก K/V ซ้ำ rep เท่า
+                dots = (Qg @ k.permute(1, 2, 0)).float()                # q·k → (KV, rep, S)
                 A = torch.softmax(dots * scale, dim=-1)                 # softmax(q·k/√d_k)
-                o = A.to(self.dtype) @ V
-                dots, A = dots[:, 0], A[:, 0]
-            x = x + self.lin(o.transpose(0, 1).reshape(T, self.H * self.hd), p + "self_attn.o_proj.weight")
+                o = (A.to(self.dtype) @ v.transpose(0, 1)).reshape(1, self.H * self.hd)
+                dots, A = dots.reshape(self.H, S), A.reshape(self.H, S)
+            x = x + self.lin(o, p + "self_attn.o_proj.weight")
             h = self.rms(x, self.W[p + "post_attention_layernorm.weight"])
             g = self.lin(h, p + "mlp.gate_proj.weight")
             u = self.lin(h, p + "mlp.up_proj.weight")
             x = x + self.lin(Fn.silu(g) * u, p + "mlp.down_proj.weight")
             if trace:
-                tr.append({"A": A, "dots": dots, "norm": float(x[-1].float().norm()), "hd": self.hd})
+                tr.append({"A": A, "dots": dots, "norm": x[-1].float().norm(), "hd": self.hd})   # ยังไม่ดึงค่า (กันรอการ์ดจอทุกชั้น)
         x = self.rms(x[-1:], self.W["norm.weight"])
         logits = self.lin(x, "lm_head.weight")[0]
         return logits, tr
@@ -534,7 +548,7 @@ def sample_step(logits, tr, tok, T, top_k, top_p, rep_pen, history, show=48, ctx
                       "dot": float(dots[head, pos]), "dk": last.get("hd", 128),
                       "sum": _safe_sum(row),
                       "back": S - 1 - pos},
-        "norms": [round(l["norm"], 1) for l in tr],
+        "norms": [round(n, 1) for n in torch.stack([l["norm"] for l in tr]).cpu().tolist()],
     }
 
 

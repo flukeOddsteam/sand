@@ -858,6 +858,25 @@ def build_big_prompt(user_text, think_on, tk, budget=3000, web_pages=None):
     return head + "".join(turns) + tail, [t for t, _ in found], len(taught)
 
 
+def pace(last, delay_ms):
+    """“ความเร็วแสดงผล” เป็นเพดานความเร็ว ไม่ใช่เวลาที่บวกเพิ่ม: ถ้าสมองคิดช้ากว่าเพดานอยู่แล้ว จะไม่รอเพิ่มเลย"""
+    if delay_ms:
+        wait = delay_ms / 1000 - (time.time() - last)
+        if wait > 0:
+            time.sleep(wait)
+    return time.time()
+
+
+def slow_note(m):
+    """เตือนเมื่อสมองโตตัวใหญ่ต้องคิดด้วย CPU"""
+    if m.device == "cpu" and m.n_params > 2.5e9:
+        _, _, gpu = B.memory_budget()
+        return ("⚠ สมองโตตัวนี้กำลังคิดด้วย CPU จึงช้ามาก"
+                + (" — เครื่องนี้มีการ์ดจอ NVIDIA แต่ PyTorch ยังใช้ไม่ได้ ปิดแซนด์แล้วเปิด start-windows.bat ใหม่" if
+                   __import__("shutil").which("nvidia-smi") else " — ใช้ Qwen3 1.7B จะเร็วกว่ามาก"))
+    return None
+
+
 def _stream_big(user_text, write):
     gs = gen_settings()
     x("INSERT INTO messages(role,content,ts) VALUES('user',?,?)", (user_text, time.time()))
@@ -877,6 +896,8 @@ def _stream_big(user_text, write):
             "quant8": m.quant8, "quant": m.quant, "vocab": tk.vocab,
             "web": [{"title": p["title"], "url": p["url"]} for p in web_used]}
     write({"start": info, "prompt": prompt[-4000:]})
+    if slow_note(m):
+        write({"note": slow_note(m)})
     stops = {i for i in (tk.id("<|im_end|>"), tk.id("<|endoftext|>")) if i is not None}
     t_s, t_e = tk.id("<think>"), tk.id("</think>")
     cache = m.new_cache()
@@ -884,6 +905,7 @@ def _stream_big(user_text, write):
     with BIG.lock:
         logits, tr = m.forward(ids, 0, cache, trace=True)
     seq, gen, tokens = list(ids), [], []
+    last_t = time.time()
     phase = "answer"
     buf = {"think": [], "answer": []}
     shown = {"think": "", "answer": ""}
@@ -915,8 +937,7 @@ def _stream_big(user_text, write):
         seq.append(nxt)
         with BIG.lock:
             logits, tr = m.forward([nxt], len(seq) - 1, cache, trace=True)
-        if gs["delay"]:
-            time.sleep(gs["delay"] / 1000)
+        last_t = pace(last_t, gs["delay"])
     secs = time.time() - t0
     answer = shown["answer"].strip() or "…"
     ps = [t["p"] for t in tokens]
@@ -1014,6 +1035,8 @@ def _stream_agent(user_text, write):
             "prompt_tokens": len(ids), "prompt_chars": len(ids), "taught": 0, "retrieved": [],
             "quant8": m.quant8, "quant": m.quant, "vocab": tk.vocab, "web": []}
     write({"start": info, "prompt": prompt[-4000:]})
+    if slow_note(m):
+        write({"note": slow_note(m)})
     stops = {i for i in (tk.id("<|im_end|>"), tk.id("<|endoftext|>")) if i is not None}
     t_s, t_e = tk.id("<think>"), tk.id("</think>")
     c_s, c_e = tk.id("<tool_call>"), tk.id("</tool_call>")
@@ -1919,6 +1942,7 @@ def _stream_chat(user_text, write):
         write({"note": rerank_note(cands)})
     write({"start": info, "prompt": prompt})
     tokens, out = [], ""
+    last_t = time.time()
     forced = None if chosen is None else t.tok.encode(chosen + "\n")
     for i in range(MAX_REPLY if forced is None else len(forced)):
         with t.lock:
@@ -1933,8 +1957,7 @@ def _stream_chat(user_text, write):
         out += st["ch"]
         tokens.append(st)
         write({"tok": st})
-        if gs["delay"]:
-            time.sleep(gs["delay"] / 1000)
+        last_t = pace(last_t, gs["delay"])
     secs = time.time() - t0
     ps = [tk["p"] for tk in tokens]
     summary = {"chars": len(out), "secs": round(secs, 2),
