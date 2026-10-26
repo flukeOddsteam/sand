@@ -1528,6 +1528,8 @@ function renderBrain(){
       ${mode === 'baby' ? '<span class="tag bi">ใช้อยู่</span>' : '<button class="btn sm" data-baby>ใช้สมองนี้</button>'}</h5>
       <div class="muted">${fmtNum(S.train.params)} น้ำหนัก · ฝึกไปแล้ว ${fmtNum(S.train.step)} ก้าว · เรียนรู้จากข้อมูลของคุณจริงๆ แต่ยังพูดได้แค่เรื่องง่ายๆ</div></div>
     <h3>🎓 สมองโต (โมเดลเปิด + เครื่องยนต์ของเรา) <span class="muted" style="font-weight:400">${ram}</span></h3>`
+    + (M.gpu_unused ? `<div class="warn">⚠ เครื่องนี้มีการ์ดจอ NVIDIA แต่แซนด์ยังใช้ไม่ได้ (PyTorch ${M.cuda_build ? 'CUDA ' + esc(M.cuda_build) + ' มองไม่เห็นการ์ด' : 'เป็นรุ่น CPU'}) — สมองโตจะคิดด้วย CPU ช้ามาก
+      · วิธีแก้: ${M.cuda_build ? 'อัปเดตไดรเวอร์ NVIDIA เป็นรุ่นล่าสุด แล้วเปิดแซนด์ใหม่' : 'ปิดแซนด์ แล้วเปิด start-windows.bat ใหม่ จะเปลี่ยนเป็นรุ่น GPU ให้เอง (~2.5GB ครั้งเดียว) · ถ้ายังไม่ได้ ลบไฟล์ <span class="mono">.venv\\gpu_tried</span> แล้วลองอีกครั้ง'}</div>` : '')
     + G.models.map(m => {
       const using = mode === 'big' && L && L.key === m.key, d = m.dl;
       const loading = ld.state === 'loading' && ld.key === m.key;

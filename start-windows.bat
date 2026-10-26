@@ -43,7 +43,7 @@ if errorlevel 1 (
 
 :haveenv
 call ".venv\Scripts\activate.bat"
-python -c "import torch, tokenizers, numpy" >nul 2>&1 && goto :run
+python -c "import torch, tokenizers, numpy" >nul 2>&1 && goto :checkgpu
 
 echo กำลังติดตั้ง PyTorch และ tokenizers (ครั้งแรกครั้งเดียว)...
 python -m pip install --upgrade pip >nul
@@ -60,6 +60,16 @@ echo ติดตั้งรุ่น GPU ไม่สำเร็จ — ใ�
 :cputorch
 python -m pip install torch
 if errorlevel 1 goto :installfail
+
+:checkgpu
+REM มีการ์ด NVIDIA แต่ PyTorch ที่ติดตั้งไว้มองไม่เห็น (เช่น ติดตั้งรุ่น CPU ไว้ก่อน) → เปลี่ยนเป็นรุ่น GPU (ลองครั้งเดียว)
+where nvidia-smi >nul 2>&1 || goto :run
+python -c "import torch,sys;sys.exit(0 if torch.cuda.is_available() else 1)" >nul 2>&1 && goto :run
+if exist ".venv\gpu_tried" goto :run
+echo พบการ์ดจอ NVIDIA แต่ PyTorch ที่ติดตั้งไว้ใช้การ์ดไม่ได้ — กำลังติดตั้งรุ่น GPU (~2.5GB ครั้งเดียว)
+echo tried> ".venv\gpu_tried"
+python -m pip install --force-reinstall torch --index-url https://download.pytorch.org/whl/cu128 || echo ติดตั้งรุ่น GPU ไม่สำเร็จ — ใช้ CPU ต่อไป
+python -c "import torch;print('PyTorch', torch.__version__, '· ใช้การ์ดจอได้' if torch.cuda.is_available() else '· ยังใช้การ์ดจอไม่ได้ ลองอัปเดตไดรเวอร์ NVIDIA')"
 
 :run
 set PYTHONUTF8=1

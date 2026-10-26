@@ -165,11 +165,32 @@ def weight_files(d):
     return ["model.safetensors"]
 
 
-def is_downloaded(root, key):
-    d = model_dir(root, key)
-    if not all(os.path.exists(os.path.join(d, f)) for f in CONFIG_FILES):
+def safetensors_ok(path):
+    """ไฟล์ครบไหม: [8 ไบต์ = ขนาด header][header JSON][ข้อมูล] → ขนาดไฟล์ต้อง ≥ 8 + header + ข้อมูลชิ้นท้ายสุด"""
+    try:
+        size = os.path.getsize(path)
+        with open(path, "rb") as f:
+            n = struct.unpack("<Q", f.read(8))[0]
+            if n <= 0 or 8 + n > size:
+                return False
+            header = json.loads(f.read(n))
+        end = max((v["data_offsets"][1] for k, v in header.items() if k != "__metadata__"), default=0)
+        return 8 + n + end <= size
+    except (OSError, ValueError, KeyError, struct.error):
         return False
-    return all(os.path.exists(os.path.join(d, f)) for f in weight_files(d))
+
+
+def broken_files(root, key):
+    """ไฟล์ที่ยังไม่มีหรือดาวน์โหลดมาไม่ครบ"""
+    d = model_dir(root, key)
+    bad = [f for f in CONFIG_FILES if not os.path.exists(os.path.join(d, f))]
+    if bad:
+        return bad
+    return [f for f in weight_files(d) if not safetensors_ok(os.path.join(d, f))]
+
+
+def is_downloaded(root, key):
+    return not broken_files(root, key)
 
 
 def download(root, key, status, stop):
@@ -197,34 +218,62 @@ def download(root, key, status, stop):
     done = 0
     for f, optional in plan:
         dest = os.path.join(d, f)
-        if os.path.exists(dest) and (not sizes[f] or os.path.getsize(dest) == sizes[f]):
+        want = sizes[f]
+        ok = lambda p: (os.path.getsize(p) == want if want else True) and (not p.endswith(".safetensors") or safetensors_ok(p))
+        if os.path.exists(dest):
+            if ok(dest):
+                done += os.path.getsize(dest)
+                status["done"] = done
+                continue
+            os.replace(dest, dest + ".part")           # ไฟล์เดิมไม่ครบ → ดาวน์โหลดต่อจากที่ค้างไว้
+        part = dest + ".part"
+        status["file"] = f
+        tries = 0
+        while True:
+            start = os.path.getsize(part) if os.path.exists(part) else 0
+            if want and start > want:                  # เกินขนาดจริง = เสีย เริ่มไฟล์นี้ใหม่
+                os.remove(part)
+                start = 0
+            if not want or start < want:
+                try:
+                    r = _open(url(f), start)
+                except urllib.error.HTTPError as e:
+                    if optional and e.code == 404:
+                        break
+                    if e.code == 416 and start:        # ขอต่อเกินท้ายไฟล์ = ได้ครบแล้ว
+                        r = None
+                    else:
+                        raise
+                if r is not None:
+                    if start and r.status != 206:      # เซิร์ฟเวอร์ไม่รองรับการต่อ เริ่มใหม่
+                        start = 0
+                    status["done"] = done + start
+                    try:
+                        with r, open(part, "ab" if start else "wb") as out:
+                            while True:
+                                if stop.is_set():
+                                    status.update(state="idle", file="หยุดไว้ (กดดาวน์โหลดต่อได้)")
+                                    return False
+                                chunk = r.read(1 << 20)
+                                if not chunk:
+                                    break
+                                out.write(chunk)
+                                status["done"] += len(chunk)
+                    except (OSError, urllib.error.URLError) as e:   # เน็ตหลุดกลางทาง → ต่อใหม่
+                        if tries >= 8:
+                            raise
+                        status["file"] = f"{f} (เน็ตหลุด กำลังต่อใหม่: {type(e).__name__})"
+            if ok(part):
+                break
+            tries += 1                                 # เซิร์ฟเวอร์ปิดก่อนส่งครบ → ขอต่อจากที่ได้
+            if tries > 8:
+                raise IOError(f"ดาวน์โหลด {f} ไม่ครบ ({os.path.getsize(part):,} จาก {want:,} ไบต์) — กดดาวน์โหลดต่อ")
+            status["file"] = f"{f} (ได้ไม่ครบ ขอต่อครั้งที่ {tries})"
+            time.sleep(min(30, 2 * tries))
+        if os.path.exists(part):
+            os.replace(part, dest)
             done += os.path.getsize(dest)
             status["done"] = done
-            continue
-        part = dest + ".part"
-        start = os.path.getsize(part) if os.path.exists(part) else 0
-        status["file"] = f
-        try:
-            r = _open(url(f), start)
-        except urllib.error.HTTPError as e:
-            if optional and e.code == 404:
-                continue
-            raise
-        if start and r.status != 206:     # เซิร์ฟเวอร์ไม่รองรับการต่อ เริ่มใหม่
-            start = 0
-        done += start
-        with r, open(part, "ab" if start else "wb") as out:
-            while True:
-                if stop.is_set():
-                    status.update(state="idle", file="หยุดไว้ (กดดาวน์โหลดต่อได้)")
-                    return False
-                chunk = r.read(1 << 20)
-                if not chunk:
-                    break
-                out.write(chunk)
-                done += len(chunk)
-                status["done"] = done
-        os.replace(part, dest)
     status.update(state="done", file="", done=status["total"])
     return True
 

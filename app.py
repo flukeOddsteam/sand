@@ -637,6 +637,13 @@ class BigBrain:
     def status(self):
         ram = B.system_ram_gb()
         total, kind, gpu = B.memory_budget()
+        import shutil
+        try:
+            import torch
+            cuda_build = torch.version.cuda
+        except Exception:
+            cuda_build = None
+        nvidia = bool(shutil.which("nvidia-smi"))
         out = []
         for k, m in B.MODELS.items():
             pl = self.plan(k)
@@ -652,7 +659,8 @@ class BigBrain:
                     "dtype": str(mm.dtype).replace("torch.", ""), "quant8": mm.quant8, "quant": mm.quant,
                     "mem_gb": round(mm.bytes / 1e9, 2), "share": self.share}
         return {"models": out, "loaded": info, "load": self.load_state, "ram_gb": ram,
-                "mem": {"kind": kind, "total_gb": total and round(total, 1), "gpu": gpu},
+                "mem": {"kind": kind, "total_gb": total and round(total, 1), "gpu": gpu,
+                        "gpu_unused": nvidia and not gpu, "cuda_build": cuda_build},
                 "quant_pref": setting("big_quant", "auto")}
 
     def download(self, key):
@@ -674,7 +682,12 @@ class BigBrain:
             self.stops[key].set()
 
     def load(self, key):
-        if key not in B.MODELS or not B.is_downloaded(MODELS_DIR, key) or self.load_state["state"] == "loading":
+        if key not in B.MODELS or self.load_state["state"] == "loading":
+            return
+        bad = B.broken_files(MODELS_DIR, key)
+        if bad:
+            self.load_state = {"state": "error", "progress": 0.0, "key": key,
+                               "error": f"ไฟล์ดาวน์โหลดมาไม่ครบ: {', '.join(bad)} — กด ⬇ ดาวน์โหลดต่อ (จะต่อจากที่ค้างไว้ ไม่เริ่มใหม่ทั้งหมด)"}
             return
         self.load_state = {"state": "loading", "progress": 0.0, "error": None, "key": key}
 
