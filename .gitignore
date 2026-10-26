@@ -13,3 +13,4 @@ sand.db-journal
 
 # น้ำหนักโมเดลเปิดที่ดาวน์โหลดมา (หลาย GB)
 models/
+agent_backups/

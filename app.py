@@ -23,6 +23,7 @@ from html import escape as html_escape
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from urllib.parse import parse_qs, urlparse
 
+import agent as AG
 import bigbrain as B
 import web as WEB
 import formulas as F
@@ -923,6 +924,218 @@ def _stream_big(user_text, write):
     record_growth()
 
 
+# ---------------------------------------------------------------- 💻 โหมดช่วยเขียนโค้ด (สมองโต + เครื่องมือ)
+AGENT = {"stop": False, "pending": {}, "active": False}
+AGENT_CTX = 8192          # ความจำในงานหนึ่ง (โทเคน) · สมอง 8B ใช้ ~0.15 MB ต่อโทเคน → ~1.2 GB
+AGENT_STEPS = 15          # เรียกเครื่องมือได้สูงสุดกี่ครั้งต่องาน
+BACKUP_DIR = os.path.join(BASE, "agent_backups")
+
+
+def agent_state():
+    d = setting("agent_dir", "")
+    root, err = AG.check_root(d) if d else (None, None)
+    return {"dir": d, "root": root, "error": err, "active": AGENT["active"],
+            "pending": [{"id": k, **v["show"]} for k, v in AGENT["pending"].items()]}
+
+
+def _ask_ok(write, name, prev, allowed):
+    """ขออนุญาตผู้ใช้ก่อนเขียนไฟล์/รันคำสั่ง · รอได้ 10 นาที · ไม่ตอบ = ไม่อนุญาต"""
+    if name in allowed:
+        return True
+    import uuid
+    rid = uuid.uuid4().hex[:12]
+    ev = threading.Event()
+    AGENT["pending"][rid] = {"ev": ev, "ok": False, "always": False, "show": {"tool": name, **prev}}
+    try:
+        if write({"ask": {"id": rid, "tool": name, **prev}}) is False:
+            return False
+        t0 = last = time.time()
+        while not ev.wait(1):
+            if AGENT["stop"] or time.time() - t0 > 600:
+                return False
+            if time.time() - last > 15:
+                last = time.time()
+                if write({"ping": 1}) is False:          # ผู้ใช้ปิดหน้าไปแล้ว
+                    return False
+        r = AGENT["pending"][rid]
+        if r["ok"] and r["always"]:
+            allowed.add(name)
+        return r["ok"]
+    finally:
+        AGENT["pending"].pop(rid, None)
+
+
+def _short_args(name, a):
+    if name in ("write_file", "edit_file"):
+        return a.get("path", "")
+    return " · ".join(f"{v}"[:120] for v in a.values())
+
+
+def _stream_agent(user_text, write):
+    gs = gen_settings()
+    root, err = AG.check_root(setting("agent_dir", ""))
+    if err:
+        write({"error": err + " — ตั้งโฟลเดอร์งานในแถบ 💻 ใต้ช่องพิมพ์"})
+        return
+    x("INSERT INTO messages(role,content,ts) VALUES('user',?,?)", (user_text, time.time()))
+    with BIG.lock:
+        m, tk, key = BIG.model, BIG.tok, BIG.key
+    meta = B.MODELS[key]
+    think_on = meta["think"] and gs["think"]
+    wset = web_settings()
+    net = {"on": wset["net"], "provider": wset["provider"], "key": setting("tavily_key", "")}
+    ws = AG.Workspace(root, BACKUP_DIR)
+    empty_think = "<think>\n\n</think>\n\n"
+    head = f"<|im_start|>system\n{AG.system_prompt(root, wset['net'])}<|im_end|>\n"
+    hist = current_session(13, gap=3 * 3600)
+    turns = [f"<|im_start|>{'user' if h['role'] == 'user' else 'assistant'}\n{h['content']}<|im_end|>\n" for h in hist]
+    tail = "<|im_start|>assistant\n" + ("" if think_on else empty_think)
+    while len(turns) > 1 and len(tk.encode(head + "".join(turns) + tail)) > 3500:
+        turns.pop(0)
+    prompt = head + "".join(turns) + tail
+    ids = tk.encode(prompt)
+    T, top_k, top_p = gs["temperature"], gs["top_k"], 0.95
+    info = {"mode": "big", "agent": True, "root": root, "size_label": meta["label"], "label": meta["label"],
+            "params": m.n_params, "device": m.device, "layers": m.L, "heads": m.H, "kv": m.KV, "d": m.d, "hd": m.hd,
+            "step": trainer.step, "T": T, "top_k": top_k, "top_p": top_p, "rep": 1.0, "think": think_on,
+            "prompt_tokens": len(ids), "prompt_chars": len(ids), "taught": 0, "retrieved": [],
+            "quant8": m.quant8, "quant": m.quant, "vocab": tk.vocab, "web": []}
+    write({"start": info, "prompt": prompt[-4000:]})
+    stops = {i for i in (tk.id("<|im_end|>"), tk.id("<|endoftext|>")) if i is not None}
+    t_s, t_e = tk.id("<think>"), tk.id("</think>")
+    c_s, c_e = tk.id("<tool_call>"), tk.id("</tool_call>")
+    if c_s is None or c_e is None:
+        write({"error": "สมองนี้ไม่มีโทเคน <tool_call> จึงเรียกเครื่องมือไม่ได้ — ใช้ Qwen3"})
+        return
+    AGENT.update(stop=False, active=True)
+    cache = m.new_cache()
+    t0 = time.time()
+    with BIG.lock:
+        logits, tr = m.forward(ids, 0, cache, trace=True)
+    seq, tokens, said, thoughts, log = list(ids), [], [], [], []
+    allowed, steps, ended = set(), 0, None
+    say(f"💻 เริ่มงานเขียนโค้ดใน {root}", "💻")
+    try:
+        while True:
+            phase, gen = "answer", []
+            buf = {"think": [], "answer": [], "tool": []}
+            shown = {"think": "", "answer": "", "tool": ""}
+            ended = "long"
+            for _ in range(max(gs["max_tokens"], 2048)):
+                if AGENT["stop"]:
+                    ended = "stopped"
+                    break
+                if len(seq) >= AGENT_CTX:
+                    ended = "ctx"
+                    break
+                nxt, st = B.sample_step(logits, tr, tk, T, top_k, top_p, 1.0, gen, ctx_ids=seq)
+                gen.append(nxt)
+                st["phase"] = phase
+                if nxt in stops:
+                    st["stop"] = True
+                    tokens.append(st)
+                    write({"tok": st})
+                    ended = "end"
+                    break
+                if nxt == t_s:
+                    phase = st["phase"] = "think"
+                    st["marker"], st["ch"] = "think_start", ""
+                elif nxt == t_e:
+                    st["marker"], st["ch"] = "think_end", ""
+                    phase = "answer"
+                elif nxt == c_s:
+                    phase = st["phase"] = "tool"
+                    st["marker"], st["ch"] = "tool_start", ""
+                elif nxt == c_e:
+                    st["marker"], st["ch"] = "tool_end", ""
+                    tokens.append(st)
+                    write({"tok": st})
+                    seq.append(nxt)
+                    ended = "tool"
+                    break
+                else:
+                    buf[phase].append(nxt)
+                    full = tk.decode(buf[phase])
+                    if full.endswith("�"):
+                        st["ch"] = ""
+                    else:
+                        st["ch"] = full[len(shown[phase]):]
+                        shown[phase] = full
+                tokens.append(st)
+                write({"tok": st})
+                seq.append(nxt)
+                with BIG.lock:
+                    logits, tr = m.forward([nxt], len(seq) - 1, cache, trace=True)
+            if shown["answer"].strip():
+                said.append(shown["answer"].strip())
+            if shown["think"].strip():
+                thoughts.append(shown["think"].strip())
+            if ended != "tool":
+                break
+            # ---- สมองโตเรียกเครื่องมือ
+            steps += 1
+            name, args, ok_run = "?", {}, True
+            try:
+                name, args = AG.parse_call("<tool_call>" + shown["tool"] + "</tool_call>")
+                write({"tool": {"stage": "call", "step": steps, "name": name, "args": _short_args(name, args)}})
+                if name in AG.NEEDS_OK:
+                    prev = AG.preview(ws, name, args)
+                    ok_run = _ask_ok(write, name, prev, allowed)
+                if ok_run:
+                    result, summary = AG.run_tool(ws, name, args, net)
+                else:
+                    result = "ผู้ใช้ไม่อนุญาตให้ทำสิ่งนี้ — อย่าพยายามทำซ้ำแบบเดิม ถามผู้ใช้หรือหาทางอื่น"
+                    summary = "❌ ผู้ใช้ไม่อนุญาต"
+            except AG.ToolError as e:
+                result, summary, ok_run = f"ทำไม่ได้: {e}", f"⚠ {e}", False
+            except Exception as e:
+                result, summary, ok_run = f"ผิดพลาด {type(e).__name__}: {e}", f"⚠ {type(e).__name__}: {e}", False
+            log.append({"step": steps, "name": name, "args": _short_args(name, args), "summary": summary})
+            write({"tool": {"stage": "result", "step": steps, "name": name, "summary": summary, "ok": ok_run,
+                            "output": result[:2000]}})
+            say(f"💻 {summary}", "🔧")
+            if AGENT["stop"]:
+                ended = "stopped"
+                break
+            if steps >= AGENT_STEPS:
+                result += "\n\n(ใช้เครื่องมือครบจำนวนสูงสุดของงานนี้แล้ว ห้ามเรียกเครื่องมือเพิ่ม ให้สรุปให้ผู้ใช้เลย)"
+            if steps > AGENT_STEPS:
+                ended = "steps"
+                break
+            more = tk.encode("<|im_end|>\n<|im_start|>user\n<tool_response>\n" + result + "\n</tool_response><|im_end|>\n"
+                             "<|im_start|>assistant\n" + ("" if think_on else empty_think))
+            if len(seq) + len(more) >= AGENT_CTX:
+                ended = "ctx"
+                break
+            with BIG.lock:     # ป้อน </tool_call> ที่เพิ่งเขียน + ผลของเครื่องมือ เข้าความจำ (KV cache) ทีเดียว
+                logits, tr = m.forward([seq[-1]] + more, len(seq) - 1, cache, trace=True)
+            seq.extend(more)
+    finally:
+        AGENT.update(active=False, stop=False)
+    notes = {"ctx": "⚠ งานยาวเกินความจำของรอบนี้ (8,192 โทเคน) — แบ่งงานให้เล็กลง หรือบอกให้ทำต่อ",
+             "stopped": "⏹ หยุดงานตามที่สั่ง", "steps": f"⚠ ใช้เครื่องมือครบ {AGENT_STEPS} ครั้งแล้ว — บอกให้ทำต่อได้",
+             "long": "⚠ คำตอบยาวเกินกำหนด (ปรับ “ตอบยาวสุด” ได้ในหน้าต่างเลือกสมอง)"}
+    if ended in notes:
+        write({"note": notes[ended]})
+    answer = "\n\n".join(said).strip() or notes.get(ended, "…")
+    secs = time.time() - t0
+    ps = [t["p"] for t in tokens]
+    summary = {"chars": len(answer), "tokens": len(tokens), "secs": round(secs, 2),
+               "avg_p": sum(ps) / len(ps) if ps else 0,
+               "ppl": math.exp(-sum(math.log(max(p, 1e-12)) for p in ps) / len(ps)) if ps else 0,
+               "avg_H": sum(t["H"] for t in tokens) / len(tokens) if tokens else 0,
+               "think_tokens": sum(1 for t in tokens if t.get("phase") == "think"), "tools": len(log)}
+    aid = x("INSERT INTO messages(role,content,ts) VALUES('assistant',?,?)", (answer, time.time()))
+    info["tools"] = log
+    x("INSERT OR REPLACE INTO traces(msg_id,data) VALUES(?,?)",
+      (aid, json.dumps({"info": info, "prompt": prompt[-4000:], "tokens": tokens[:3000],
+                        "thinking": "\n\n".join(thoughts), "summary": summary}, ensure_ascii=False)))
+    write({"done": True, "id": aid, "summary": summary})
+    if log:
+        event("code", f"แซนด์ช่วยเขียนโค้ด: ใช้เครื่องมือ {len(log)} ครั้ง ใน {os.path.basename(root)}")
+    record_growth()
+
+
 # ---------------------------------------------------------------- อินเทอร์เน็ต (ปิดไว้เป็นค่าเริ่มต้น)
 SMALLTALK = ("สวัสดี", "หวัดดี", "ดีจ้า", "ขอบคุณ", "ขอบใจ", "บาย", "บ๊ายบาย", "ลาก่อน", "ฝันดี", "ราตรีสวัสดิ์",
              "โอเค", "ok", "hi", "hello", "555", "ครับ", "ค่ะ", "ได้", "ใช่", "อืม")
@@ -1606,7 +1819,21 @@ def typo_note(fixes, young):
     return "⌨️ แซนด์เดาว่าพิมพ์ผิดแป้น: " + ", ".join(parts) + f" · {how}"
 
 
-def stream_chat(user_text, write):
+def stream_chat(user_text, write, mode="chat"):
+    if mode == "code":
+        if not BIG.ready():
+            write({"error": "โหมดเขียนโค้ดต้องใช้สมองโต — กดปุ่มสมองมุมขวาบน แล้วโหลด Qwen3 (แนะนำ 4B ขึ้นไป)"})
+            return
+        if AGENT["active"]:
+            write({"error": "กำลังทำงานเขียนโค้ดอีกงานอยู่ — รอให้เสร็จหรือกดหยุดก่อน"})
+            return
+        try:
+            _stream_agent(user_text, write)       # ไม่เดาคำพิมพ์ผิด เพราะโค้ดมีตัวอักษรอังกฤษเยอะ
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            write({"error": f"{type(e).__name__}: {e}"})
+        return
     remember_name(user_text)
     fixed, fixes = fix_typing(user_text)
     if fixes:
@@ -1805,6 +2032,7 @@ def state():
         "chats": v["chats"],
         "big": BIG.status(),
         "web": web_state(),
+        "agent": agent_state(),
     }
 
 
@@ -1891,13 +2119,32 @@ class Handler(BaseHTTPRequestHandler):
 
             def write(o):
                 if not alive[0]:
-                    return
+                    return False
                 try:
                     self.wfile.write((json.dumps(o, ensure_ascii=False) + "\n").encode())
                     self.wfile.flush()
                 except Exception:
                     alive[0] = False
-            stream_chat(text, write)
+                return alive[0]
+            stream_chat(text, write, "code" if d.get("mode") == "code" else "chat")
+        elif p == "/api/agent/approve":
+            r = AGENT["pending"].get(d.get("id", ""))
+            if not r:
+                return ok("คำขอนี้หมดอายุแล้ว")
+            r.update(ok=bool(d.get("ok")), always=bool(d.get("always")))
+            r["ev"].set()
+            ok()
+        elif p == "/api/agent/stop":
+            AGENT["stop"] = True
+            for r in list(AGENT["pending"].values()):
+                r["ev"].set()
+            ok()
+        elif p == "/api/agent/dir":
+            root, err = AG.check_root(d.get("dir", ""))
+            if err:
+                return ok(err)
+            set_setting("agent_dir", root)
+            ok()
         elif p == "/api/learn/convo":
             if not web_settings()["net"]:
                 return ok("ยังไม่ได้เปิดให้แซนด์ใช้อินเทอร์เน็ต — เปิดสวิตช์ในการ์ดอินเทอร์เน็ตก่อน")

@@ -241,6 +241,19 @@ details.ref summary{cursor:pointer;font-size:13px;color:var(--sand)}
 .stream span.wait{color:var(--muted);font-size:11px}
 .webnote{font-size:12.5px;color:var(--teal);margin-bottom:6px;line-height:1.6}
 .typonote{font-size:12.5px;color:#e0b25a;margin-bottom:6px;line-height:1.6}
+.toolbox{display:flex;flex-direction:column;gap:6px;margin-bottom:6px}
+.toolcard{background:var(--deep);border:1px solid var(--line);border-radius:10px;padding:6px 10px;font-size:12.5px;line-height:1.55}
+.toolcard .tn{color:var(--teal);font-weight:700}
+.toolcard .ta{font-family:ui-monospace,Menlo,Consolas,monospace;color:var(--muted);word-break:break-all}
+.toolcard.bad{border-color:#a5533f}
+.toolcard pre,.askcard pre{white-space:pre-wrap;word-break:break-word;font-size:12px;max-height:260px;overflow:auto;margin:4px 0 0;
+  font-family:ui-monospace,Menlo,Consolas,monospace;background:rgba(0,0,0,.18);border-radius:6px;padding:6px 8px}
+.askcard{border:1px solid #e0b25a;border-radius:10px;padding:8px 10px;font-size:13px;background:rgba(224,178,90,.07)}
+.askcard .btns{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px}
+.dadd{color:#7fc97f}.ddel{color:#e07a5f}.dhd{color:var(--muted)}
+#codeBar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:0 22px 12px;max-width:806px;width:100%;margin:-8px auto 0;font-size:13px}
+#codeBar input[type=text]{flex:1;min-width:200px;background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:5px 9px;font-size:12.5px}
+#codeBar label{display:flex;align-items:center;gap:6px;margin:0;cursor:pointer}
 .langs{display:flex;flex-wrap:wrap;gap:6px 14px;margin:6px 0 10px}
 .langs label{display:flex;align-items:center;gap:5px;font-size:13.5px;cursor:pointer}
 .langs .n{color:var(--muted);font-size:11.5px}
@@ -309,6 +322,15 @@ details.ref summary{cursor:pointer;font-size:13px;color:var(--sand)}
       <textarea id="in" rows="1" placeholder="คุยกับแซนด์… (Enter ส่ง)"></textarea>
       <button id="send">ส่ง</button>
     </form>
+    <div id="codeBar">
+      <label><input type="checkbox" id="codeOn" style="width:auto;margin:0"> 💻 โหมดเขียนโค้ด</label>
+      <span id="codeCfg" class="hidden" style="display:contents">
+        <input type="text" id="codeDir" placeholder="📁 โฟลเดอร์โปรเจกต์ เช่น C:\Users\USER\Desktop\myapp">
+        <button class="btn sm" id="codeSet">ตั้งโฟลเดอร์</button>
+        <button class="btn sm hidden" id="codeStop">⏹ หยุดงาน</button>
+        <span id="codeMsg" class="muted"></span>
+      </span>
+    </div>
   </section>
 
   <aside>
@@ -714,7 +736,8 @@ async function send(){
   renderStream();
   let full = '', thought = '', t0 = performance.now(), gotEnd = false, tbox = null;
   try{
-    const res = await post('/api/chat', {message:text});
+    const res = await post('/api/chat', codeMode() ? {message:text, mode:'code'} : {message:text});
+    if(codeMode()) $('#codeStop').classList.remove('hidden');
     const reader = res.body.getReader(), dec = new TextDecoder();
     let buf = '';
     while(true){
@@ -760,13 +783,30 @@ async function send(){
             thought += tk.ch; tbox.querySelector('div').textContent = thought; tbox.querySelector('div').scrollTop = 1e9;
           } else if(tk.marker === 'think_end' && tbox){
             tbox.open = false; tbox.querySelector('summary').textContent = `💭 ดูความคิดก่อนตอบ (${live.tokens.filter(x => x.phase === 'think').length} โทเคน)`;
-          } else if(!tk.stop){ full += tk.ch; row.body.textContent = full; }
+          } else if(!tk.stop && tk.phase !== 'tool'){ full += tk.ch; row.body.textContent = full; }
           $('#msgs').scrollTop = 1e9;
           appendStreamTok(live.tokens.length - 1);
           if(live.follow) inspectTok(live.tokens.length - 1);
           const secs = (performance.now() - t0) / 1000;
           $('#liveStatus').innerHTML = `กำลังคิด${UNIT()}ที่ <b>${live.tokens.length}</b> · ${fmtNum(live.tokens.length / secs, 1)} ${UNIT()}/วินาที` + (tk.phase === 'think' ? ' · 💭 กำลังคิดในใจ' : '');
         }
+        if(d.tool){
+          const t = d.tool;
+          if(!row.tools){ row.tools = document.createElement('div'); row.tools.className = 'toolbox'; row.body.before(row.tools); }
+          if(t.stage === 'call'){
+            if(full && !full.endsWith('\n')) full += '\n\n';
+            const c = document.createElement('div'); c.className = 'toolcard'; c.id = 'tc' + t.step + '_' + row.tools.childElementCount;
+            c.innerHTML = `🔧 <span class="tn">${esc(TOOL_TH[t.name] || t.name)}</span> <span class="ta">${esc(t.args || '')}</span><div class="tr muted">กำลังทำ…</div>`;
+            row.tools.appendChild(c); row.curTool = c;
+            $('#liveStatus').innerHTML = `🔧 ขั้นที่ ${t.step}: ${esc(TOOL_TH[t.name] || t.name)} ${esc(t.args || '')}`;
+          } else if(t.stage === 'result' && row.curTool){
+            row.curTool.classList.toggle('bad', !t.ok);
+            row.curTool.querySelector('.tr').outerHTML = `<div>${esc(t.summary)}</div>`
+              + (t.output ? `<details><summary class="muted">ดูผลที่สมองโตได้อ่าน</summary><pre>${esc(t.output)}</pre></details>` : '');
+          }
+          $('#msgs').scrollTop = 1e9;
+        }
+        if(d.ask) showAsk(row, d.ask);
         if(d.error){
           gotEnd = true;
           row.body.innerHTML = `<span class="err">แซนด์ตอบไม่ได้: ${esc(d.error)}</span>`;
@@ -793,8 +833,53 @@ async function send(){
   }
   row.classList.remove('thinking');
   busy = false; $('#send').disabled = false; orbThinking = false;
+  $('#codeStop').classList.add('hidden');
   loadState();
 }
+
+/* ---------- 💻 โหมดเขียนโค้ด ---------- */
+const TOOL_TH = {list_dir: 'ดูโฟลเดอร์', read_file: 'อ่านไฟล์', search_code: 'ค้นในโค้ด', edit_file: 'แก้ไฟล์',
+  write_file: 'เขียนไฟล์', run_command: 'รันคำสั่ง', web_search: 'ค้นเว็บ', read_url: 'อ่านเว็บ'};
+const codeMode = () => $('#codeOn').checked;
+function diffHtml(t){
+  return t.split('\n').map(l => `<span class="${l.startsWith('+++') || l.startsWith('---') || l.startsWith('@@') ? 'dhd'
+    : l.startsWith('+') ? 'dadd' : l.startsWith('-') ? 'ddel' : ''}">${esc(l)}</span>`).join('\n');
+}
+function showAsk(row, a){
+  if(!row.tools){ row.tools = document.createElement('div'); row.tools.className = 'toolbox'; row.body.before(row.tools); }
+  const c = document.createElement('div'); c.className = 'askcard';
+  c.innerHTML = `✋ <b>ขออนุญาต: ${esc(a.title)}</b><pre>${a.diff ? diffHtml(a.body) : esc(a.body)}</pre>
+    <div class="btns"><button class="btn sm primary" data-ok="1">✅ อนุญาต</button>
+    <button class="btn sm" data-ok="1" data-always="1">อนุญาตทุกครั้งในงานนี้ (${esc(TOOL_TH[a.tool] || a.tool)})</button>
+    <button class="btn sm" data-ok="0">❌ ไม่อนุญาต</button></div>`;
+  row.tools.appendChild(c);
+  $('#liveStatus').innerHTML = `✋ แซนด์รอคุณอนุญาต: ${esc(a.title)}`;
+  c.querySelectorAll('[data-ok]').forEach(b => b.onclick = async () => {
+    const ok = b.dataset.ok === '1', always = !!b.dataset.always;
+    c.querySelector('.btns').innerHTML = `<span class="muted">${ok ? (always ? '✅ อนุญาตทุกครั้งในงานนี้' : '✅ อนุญาตแล้ว') : '❌ ไม่อนุญาต'}</span>`;
+    const r = await (await post('/api/agent/approve', {id: a.id, ok, always})).json();
+    if(!r.ok) c.querySelector('.btns').innerHTML = `<span class="err">${esc(r.error)}</span>`;
+  });
+  $('#msgs').scrollTop = 1e9;
+}
+function renderCodeBar(){
+  const A = S.agent || {}, on = codeMode();
+  $('#codeCfg').classList.toggle('hidden', !on);
+  $('#in').placeholder = on ? 'สั่งงานโค้ด เช่น “เพิ่มปุ่มรีเซ็ตใน index.html” หรือ “รันเทสต์แล้วแก้ที่พัง”' : 'คุยกับแซนด์… (Enter ส่ง)';
+  if(document.activeElement !== $('#codeDir')) $('#codeDir').value = A.root || A.dir || '';
+  const bigOk = S.big?.loaded && S.settings.brain === 'big';
+  $('#codeMsg').innerHTML = !on ? '' : A.error ? `<span class="err">${esc(A.error)}</span>`
+    : !A.root ? 'เลือกโฟลเดอร์โปรเจกต์ก่อน แซนด์จะแตะได้แค่ในโฟลเดอร์นี้'
+    : !bigOk ? '<span class="err">ต้องใช้สมองโต (กดปุ่มสมองมุมขวาบน)</span>' : '✓ พร้อม · เขียนไฟล์/รันคำสั่งจะขออนุญาตก่อนเสมอ';
+}
+try { $('#codeOn').checked = localStorage.getItem('sandCode') === '1'; } catch {}
+$('#codeOn').onchange = () => { try { localStorage.setItem('sandCode', codeMode() ? '1' : '0'); } catch {} renderCodeBar(); };
+$('#codeSet').onclick = async () => {
+  const r = await (await post('/api/agent/dir', {dir: $('#codeDir').value})).json();
+  if(!r.ok) $('#codeMsg').innerHTML = `<span class="err">${esc(r.error)}</span>`; else loadState();
+};
+$('#codeDir').onkeydown = e => { if(e.key === 'Enter') $('#codeSet').click(); };
+$('#codeStop').onclick = () => post('/api/agent/stop', {});
 $('#in').addEventListener('keydown', e => { if(e.key === 'Enter' && !e.shiftKey && !e.isComposing){ e.preventDefault(); send(); } });
 $('#f').addEventListener('submit', e => { e.preventDefault(); send(); });
 
@@ -936,6 +1021,7 @@ function render(){
     $('#xptext').textContent = `${fmtNum(S.xp)} XP · อีก ${fmtNum(Math.max(0, S.xp_next - S.xp))} XP ถึงเลเวล ${S.level+1}`;
   }
   orbTarget = Math.max(5, Math.min(480, Math.round(S.grains)));
+  renderCodeBar();
   const T = S.train;
   $('#trainpill').classList.toggle('on', T.running);
   $('#trainText').innerHTML = T.running
